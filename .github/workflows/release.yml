@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14.6'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-build.txt
+
+      - name: Build
+        run: python -m PyInstaller --noconfirm sloon.spec
+
+      - name: Smoke test
+        run: |
+          ./dist/sloon/sloon --help
+          ./dist/sloon/sloon skill readonly
+          ./dist/sloon/sloon skill readwrite
+
+      - name: Package
+        run: |
+          tar -czf sloon-macos-arm64.tar.gz -C dist sloon
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            sloon-macos-arm64.tar.gz \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
