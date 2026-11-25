@@ -1,6 +1,5 @@
 """Open or reuse a Sloon workspace in the sloon-app tmux session."""
 
-import hashlib
 import os
 from pathlib import Path
 import shlex
@@ -44,14 +43,14 @@ class SloonLinkTmux:
         if not os.environ.get("TMUX"):
             raise RuntimeError("sloon-link-tmux requires a tmux client")
 
-        raw = context.properties.get("param", "")
-        if not raw.strip():
+        raw = context.properties.get("param", "").strip()
+        if not raw:
             raise ValueError("param must contain a .sloon path")
-        path = Path(raw.strip()).expanduser()
+        path = Path(raw).expanduser()
         if not path.is_absolute() or path.suffix != ".sloon":
             raise ValueError("param must be an absolute .sloon path")
         path = path.resolve(strict=True)
-        name = hashlib.sha256(os.fsencode(path)).hexdigest()
+        name = raw
         visualize = shlex.join([*SLOON_COMMAND, "--workspace", str(path), "visualize"])
         control = shlex.join([*SLOON_COMMAND, "--workspace", str(path), "control"])
 
