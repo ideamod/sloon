@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+import os
+from pathlib import Path
+import sys
+
+
+launcher = Path(__file__).resolve()
+project_environment = launcher.parent / ".venv"
+project_python = project_environment / "bin" / "python"
+if project_python.is_file() and Path(sys.prefix).resolve() != project_environment.resolve():
+    os.execv(
+        str(project_python),
+        [str(project_python), str(launcher), *sys.argv[1:]],
+    )
+
+from sloon import main
+
+raise SystemExit(main())

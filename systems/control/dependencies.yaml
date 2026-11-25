@@ -1,0 +1,6 @@
+dependencies:
+  - graph_ui
+  - logical_layout
+  - nodes
+  - node_types
+  - visible_graph

@@ -1,0 +1,17 @@
+background-color: "#101722"
+
+text-color-normal: "#E2E8F0"
+text-color-selected: "#FFFFFF"
+
+selection-color: "#173B4A"
+
+border-color-normal: "#52657A"
+border-color-selected: "#67D5E8"
+
+edge-color: "#60758B"
+
+status-icon-color-none: "#94A3B8"
+status-icon-color-progress: "#60A5FA"
+status-icon-color-success: "#4ADE80"
+status-icon-color-warning: "#FBBF24"
+status-icon-color-failure: "#FB7185"
