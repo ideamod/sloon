@@ -13,3 +13,10 @@ __pycache__/
 
 # Generated dependency specifications
 .generated/
+
+
+# PyInstaller build artifacts
+build/
+dist/
+build-onedir/
+dist-onedir/
