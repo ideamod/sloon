@@ -13,7 +13,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Input, Static
 
 from systems.control import Direction, NodeInfo, TitleSearchResult, open_control
-from systems.control.spec.api import ControlAPI
+from systems.control.spec.api import NODE_COLORS, ControlAPI
 from systems.graph_ui.spec.api import GraphUIAPI
 from systems.nodes import Nodes
 from systems.node_types import resolve_node_type
@@ -149,6 +149,8 @@ class ControlApp(App[None]):
             style=status_colors.get(status, "grey50"),
         )
         content.append(f"  WEIGHT  {weight}", style="dim")
+        if color := properties.get("color"):
+            content.append(f"  COLOR  {color}", style="dim")
 
         separator = "─" * max(1, separator_width)
         content.append("\n")
@@ -198,7 +200,7 @@ class ControlApp(App[None]):
         self._open_command(
             "command",
             "type <value> | title [value] | status <value> | note | "
-            "tags | weight | param [value] | delete (d) | connect <id> | "
+            "tags | weight | param [value] | color [value] | delete (d) | connect <id> | "
             "disconnect [id] | w<cells> | h<rows> | id",
         )
 
@@ -303,6 +305,8 @@ class ControlApp(App[None]):
         self._close_command()
         if mode == "command":
             self._run_command(event.value)
+        elif mode == "color":
+            self._set_color(event.value)
         elif mode == "title":
             if self._control.set_selected_title(event.value):
                 self._show_status("Title updated")
@@ -474,7 +478,33 @@ class ControlApp(App[None]):
             status_style += " reverse"
         content.append(f"● {result.status}", style=status_style)
 
+    def _set_color(self, value: str) -> None:
+        color = value.strip().lower()
+        if color == "none":
+            color = ""
+        if color and color not in NODE_COLORS:
+            self._show_status(f"Choose a color from {', '.join(NODE_COLORS)}, or none")
+        elif self._control.set_selected_color(color):
+            self._show_status("Color updated" if color else "Color cleared")
+        else:
+            self._show_status("No existing node is selected")
+
     def _run_command(self, value: str) -> None:
+        if value == "color":
+            info = self._control.get_selected_info()
+            if info is None:
+                self._show_status("No existing node is selected")
+                return
+            self._open_command(
+                "color", ", ".join((*NODE_COLORS, "none")),
+                str(info.properties.get("color", "")),
+            )
+            return
+
+        if value.startswith("color "):
+            self._set_color(value.removeprefix("color "))
+            return
+
         if value == "note":
             self._edit_selected_note()
             return

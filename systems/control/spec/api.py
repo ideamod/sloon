@@ -80,6 +80,9 @@ Terminal interaction contract:
   and refresh behavior as ``:note``, using the current parameter text and
   persisting changed contents through ``set_selected_param``. ``:param <value>``
   remains the direct inline parameter update command.
+- The command ``:color`` opens an input prefilled with the selected node's
+  color. ``:color <value>`` sets it inline. Use ``none`` or submit an empty
+  color input to restore the default.
 """
 
 from __future__ import annotations
@@ -92,6 +95,8 @@ from typing import Protocol
 from systems.graph_ui.spec.api import GraphUIAPI
 from systems.nodes import Nodes
 from systems.node_types.spec.api import NodeType
+
+NODE_COLORS = ("green", "red", "blue", "white", "gray", "orange", "yellow")
 
 
 class Direction(Enum):
@@ -373,6 +378,13 @@ class ControlAPI(Protocol):
         - param is not a string.
 
         Otherwise persist and return True.
+        """
+        ...
+
+    def set_selected_color(self, color: str) -> bool:
+        """Set the selected node's color, or clear it with an empty string.
+
+        Return False if the color is invalid or no existing node is selected.
         """
         ...
 

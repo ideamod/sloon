@@ -5,6 +5,22 @@ text-color-selected: "#FFFFFF"
 
 selection-color: "#173B4A"
 
+node-color-green: "#6BCB97"
+node-color-red: "#EF7C90"
+node-color-blue: "#77A9EB"
+node-color-white: "#E2E8F0"
+node-color-gray: "#94A3B8"
+node-color-orange: "#EF9D6B"
+node-color-yellow: "#E3C664"
+
+node-color-green-selected: "#95F0B8"
+node-color-red-selected: "#FFA2AF"
+node-color-blue-selected: "#A4CAFF"
+node-color-white-selected: "#FFFFFF"
+node-color-gray-selected: "#BAC7D8"
+node-color-orange-selected: "#FFB78A"
+node-color-yellow-selected: "#FFE28A"
+
 border-color-normal: "#52657A"
 border-color-selected: "#67D5E8"
 
@@ -15,3 +31,5 @@ status-icon-color-progress: "#60A5FA"
 status-icon-color-success: "#4ADE80"
 status-icon-color-warning: "#FBBF24"
 status-icon-color-failure: "#FB7185"
+
+

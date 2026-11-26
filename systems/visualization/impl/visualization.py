@@ -30,6 +30,14 @@ from systems.visible_graph import VisibleGraph, calculate_visible_graph
 _THEME_PATH = Path(__file__).resolve().parents[1] / "config" / "theme.yaml"
 _THEME_KEYS = frozenset(("background-color", "text-color-normal", "text-color-selected", "selection-color", "border-color-normal", "border-color-selected", "edge-color", *(f"status-icon-color-{status}" for status in ("none", "progress", "success", "warning", "failure"))))
 
+_NODE_COLOR_KEYS = frozenset(
+    f"node-color-{color}"
+    for color in ("green", "red", "blue", "white", "gray", "orange", "yellow")
+)
+_OPTIONAL_THEME_KEYS = _NODE_COLOR_KEYS | {
+    f"{key}-selected" for key in _NODE_COLOR_KEYS
+}
+
 
 def _load_theme(path: Path = _THEME_PATH) -> dict[str, str]:
     """Read the deliberately flat YAML theme without another dependency."""
@@ -46,7 +54,7 @@ def _load_theme(path: Path = _THEME_PATH) -> dict[str, str]:
             raise ValueError(f"invalid Visualization theme line {number}: expected key: '#RRGGBB'")
         key, value = line.split(":", 1)
         key, value = key.strip(), value.strip()
-        if key not in _THEME_KEYS:
+        if key not in _THEME_KEYS and key not in _OPTIONAL_THEME_KEYS:
             raise ValueError(f"unknown Visualization theme key {key!r} on line {number}")
         if key in theme:
             raise ValueError(f"duplicate Visualization theme key {key!r} on line {number}")
@@ -91,6 +99,7 @@ class _Snapshot:
     titles: Mapping[int, str]
     border_styles: Mapping[int, str]
     statuses: Mapping[int, str]
+    colors: Mapping[int, str]
     weights: Mapping[int, int]
     wrapped_titles: Mapping[int, tuple[str, ...]]
     rectangles: Mapping[int, Rect]
@@ -113,6 +122,7 @@ class _ReadState:
     titles: dict[int, str]
     border_styles: dict[int, str]
     statuses: dict[int, str]
+    colors: dict[int, str]
     weights: dict[int, int]
 
 
@@ -193,10 +203,11 @@ def _read_presentations(
     node_ids: list[int],
     nodes: Nodes,
     node_type_resolver: Callable[[str], NodeType],
-) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, int]]:
+) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str], dict[int, int]]:
     titles: dict[int, str] = {}
     border_styles: dict[int, str] = {}
     statuses: dict[int, str] = {}
+    colors: dict[int, str] = {}
     weights: dict[int, int] = {}
     for node_id in node_ids:
         properties = _effective_properties(nodes.get_all(node_id))
@@ -227,8 +238,9 @@ def _read_presentations(
         titles[node_id] = title or presentation.title
         border_styles[node_id] = presentation.border_style
         statuses[node_id] = properties["status"]
+        colors[node_id] = properties.get("color", "")
         weights[node_id] = _weight(properties["weight"])
-    return titles, border_styles, statuses, weights
+    return titles, border_styles, statuses, colors, weights
 
 
 def _project_visible_graph(
@@ -270,7 +282,7 @@ def _read_dependency_state(
             graph_ui.get_node_height(),
         )
         show_node_ids = _validate_show_node_ids(graph_ui.get_show_node_ids())
-        titles, border_styles, statuses, weights = _read_presentations(
+        titles, border_styles, statuses, colors, weights = _read_presentations(
             list(visible.nodes),
             nodes,
             node_type_resolver,
@@ -292,6 +304,7 @@ def _read_dependency_state(
         titles=titles,
         border_styles=border_styles,
         statuses=statuses,
+        colors=colors,
         weights=weights,
     )
 
@@ -469,6 +482,7 @@ def _make_snapshot(
     titles: dict[int, str],
     border_styles: dict[int, str],
     statuses: dict[int, str],
+    colors: dict[int, str],
     weights: dict[int, int],
     logical_layout: LogicalLayoutAPI,
     geometry: GeometryAPI,
@@ -507,6 +521,7 @@ def _make_snapshot(
         dict(titles),
         dict(border_styles),
         dict(statuses),
+        dict(colors),
         dict(weights),
         wrapped,
         rectangles,
@@ -628,8 +643,14 @@ def _render_snapshot(snapshot: _Snapshot, theme: Mapping[str, str] | None = None
         main_x, main_y = rect.x + rect.width - snapshot.node_width, rect.y
         selected = node == snapshot.selected_node
         background = theme["selection-color"] if selected else normal_background
+        border_color = theme["border-color-selected" if selected else "border-color-normal"]
+        color_key = f"node-color-{snapshot.colors[node]}"
+        if color_key in _NODE_COLOR_KEYS:
+            if selected:
+                color_key += "-selected"
+            border_color = theme.get(color_key, border_color)
         style = Style(color=theme["text-color-selected" if selected else "text-color-normal"], bgcolor=background, bold=selected)
-        border_style = Style(color=theme["border-color-selected" if selected else "border-color-normal"], bgcolor=background, bold=selected)
+        border_style = Style(color=border_color, bgcolor=background, bold=selected)
         horizontal, vertical = _BORDER_GLYPHS[snapshot.border_styles[node]]
         if node in snapshot.indicator_nodes:
             title_width = snapshot.node_width - 5
@@ -856,6 +877,7 @@ class _Visualization:
             titles=state.titles,
             border_styles=state.border_styles,
             statuses=state.statuses,
+            colors=state.colors,
             weights=state.weights,
             logical_layout=logical_layout,
             geometry=geometry,
@@ -927,6 +949,7 @@ def open_visualization(
             titles=state.titles,
             border_styles=state.border_styles,
             statuses=state.statuses,
+            colors=state.colors,
             weights=state.weights,
             logical_layout=logical_layout,
             geometry=geometry,

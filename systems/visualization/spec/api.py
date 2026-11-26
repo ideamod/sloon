@@ -28,7 +28,7 @@ class VisualizationAPI(Protocol):
     terminal screen and viewport, including empty space outside graph content,
     with empty, small, or oversized graphs and after terminal resizing or
     collapse changes. Selection retains its explicit configured background.
-    Missing, unknown, duplicate, or malformed
+    Missing required keys, unknown keys, duplicate keys, or malformed
     entries raise ``ValueError`` naming the offending key. The loaded theme
     remains fixed for the viewer lifetime.
 
@@ -38,8 +38,14 @@ class VisualizationAPI(Protocol):
     status-icon-color-success, status-icon-color-warning, and
     status-icon-color-failure. Background color applies to the screen, viewport,
     and canvas; selected
-    node cells use selection-color. Node text and border use their respective
-    normal or selected foregrounds. Edges use edge-color. Status squares use
+    node cells use selection-color. Node borders use the optional
+    node-color-green, node-color-red, node-color-blue, node-color-white,
+    node-color-gray, node-color-orange, or node-color-yellow entry matching
+    their stored color property. Selected nodes use the corresponding
+    ``-selected`` variant, such as node-color-green-selected. A missing color
+    or theme entry falls back to border-color-normal or border-color-selected
+    according to selection. Node text uses its normal or selected foreground.
+    Edges use edge-color. Status squares use
     their status foreground even when selected, with selection-color behind
     them. Colors do not alter glyphs, geometry, or navigation.
 

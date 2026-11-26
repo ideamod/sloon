@@ -14,7 +14,7 @@ from systems.visible_graph import (
     calculate_visible_graph,
 )
 
-from ..spec.api import ControlAPI, Direction, NodeInfo, TitleSearchResult
+from ..spec.api import NODE_COLORS, ControlAPI, Direction, NodeInfo, TitleSearchResult
 
 _PROPERTY_DEFAULTS = {
     "type": "void",
@@ -268,6 +268,18 @@ class _Control:
         if selected is None:
             return False
         self._nodes.set(selected, "param", param)
+        return True
+
+    def set_selected_color(self, color: str) -> bool:
+        if color not in (*NODE_COLORS, ""):
+            return False
+        selected = self._existing_selection()
+        if selected is None:
+            return False
+        if color:
+            self._nodes.set(selected, "color", color)
+        else:
+            self._nodes.delete_property(selected, "color")
         return True
 
     def set_selected_title(self, title: str) -> bool:

@@ -1270,6 +1270,40 @@ def test_assignment_tags_are_not_rendered_or_used_for_geometry() -> None:
     assert with_geometry.get_rect(1) == without_geometry.get_rect(1)
 
 
+@pytest.mark.parametrize(
+    ("properties", "theme_key", "selected_key"),
+    [
+        ({"color": "green"}, "node-color-green", "node-color-green-selected"),
+        ({}, "border-color-normal", "border-color-selected"),
+        ({"color": "green-selected"}, "border-color-normal", "border-color-selected"),
+    ],
+)
+def test_node_border_uses_saved_color_for_each_selection_state(
+    properties, theme_key, selected_key
+) -> None:
+    viewer, graph_ui, assignments, _, _ = open_styled_viewer(show_node_ids=False)
+    assignments.assignments[1] = {"type": "copy", "title": "Copy title", **properties}
+    viewer.refresh()
+    text, width, _ = rendered(viewer)
+    assert style_at(text, width, 1, 0) == Style(
+        color=viewer._theme[theme_key],
+        bgcolor=viewer._theme["background-color"],
+        bold=False,
+    )
+    assert style_at(text, width, 1, 1).bgcolor == Style(
+        bgcolor=viewer._theme["background-color"]
+    ).bgcolor
+
+    graph_ui.selected_node = 1
+    viewer.refresh()
+    text, width, _ = rendered(viewer)
+    assert style_at(text, width, 1, 0) == Style(
+        color=viewer._theme[selected_key],
+        bgcolor=viewer._theme["selection-color"],
+        bold=True,
+    )
+
+
 def test_selection_applies_background_and_preserves_status_foreground() -> None:
     viewer, graph_ui, assignments, _, _ = open_styled_viewer(
         status="failure",
