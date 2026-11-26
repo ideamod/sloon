@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
+from textual import events
 from textual.containers import VerticalScroll
 from textual.widgets import Input, Static
 
@@ -2284,6 +2285,81 @@ class ControlAppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(node_assignments.get(existing), expected)
             finally:
                 connection.close()
+
+    async def test_clipboard_keys_copy_and_paste_without_replacing_clipboard(self) -> None:
+        control = Mock()
+        clipboard_text = '{"format":"sloon-node","version":1,"properties":{}}'
+        control.copy_selected.return_value = clipboard_text
+        control.paste_selected.return_value = 7
+        app = ControlApp(control)
+        copied = subprocess.CompletedProcess(["pbcopy"], 0)
+        pasted = subprocess.CompletedProcess(["pbpaste"], 0, stdout=clipboard_text)
+
+        with patch("systems.control.app.subprocess.run", side_effect=[copied, pasted, pasted]) as run:
+            async with app.run_test() as pilot:
+                await pilot.press("y", "p", "p")
+                self.assertIn("Pasted", str(app.query_one("#status", Static).render()))
+
+        control.copy_selected.assert_called_once_with()
+        self.assertEqual(control.paste_selected.call_args_list, [call(clipboard_text)] * 2)
+        self.assertEqual([entry.args[0] for entry in run.call_args_list], [
+            ["pbcopy"], ["pbpaste"], ["pbpaste"],
+        ])
+        self.assertEqual(run.call_args_list[0].kwargs["input"], clipboard_text)
+
+    async def test_clipboard_keys_inside_text_input_do_not_copy_or_paste_nodes(self) -> None:
+        control = Mock()
+        app = ControlApp(control)
+        with patch("systems.control.app.subprocess.run") as run:
+            async with app.run_test() as pilot:
+                await pilot.press(":", "y", "p")
+                command = app.query_one("#node-command", Input)
+                self.assertTrue(command.has_focus)
+                self.assertEqual(command.value, "yp")
+                await pilot.press("escape")
+
+        run.assert_not_called()
+        control.copy_selected.assert_not_called()
+        control.paste_selected.assert_not_called()
+
+    async def test_native_terminal_paste_edits_text_without_pasting_nodes(self) -> None:
+        control = Mock()
+        control.paste_selected.return_value = 7
+        app = ControlApp(control)
+        clipboard_text = '{"format":"sloon-node","version":1,"properties":{}}'
+
+        with patch("systems.control.app.subprocess.run") as run:
+            async with app.run_test() as pilot:
+                app.post_message(events.Paste(clipboard_text))
+                await pilot.pause()
+                await pilot.press(":")
+                app.post_message(events.Paste("title A new title"))
+                await pilot.pause()
+                self.assertEqual(app.query_one("#node-command", Input).value, "title A new title")
+
+        run.assert_not_called()
+        control.paste_selected.assert_not_called()
+
+    async def test_copy_without_selection_leaves_system_clipboard_unchanged(self) -> None:
+        control = Mock()
+        control.copy_selected.return_value = None
+        app = ControlApp(control)
+        with patch("systems.control.app.subprocess.run") as run:
+            async with app.run_test() as pilot:
+                await pilot.press("y")
+                self.assertIn("No existing node", str(app.query_one("#status", Static).render()))
+
+        run.assert_not_called()
+
+    async def test_clipboard_read_failure_does_not_attempt_paste(self) -> None:
+        control = Mock()
+        app = ControlApp(control)
+        with patch("systems.control.app.subprocess.run", side_effect=OSError("offline")):
+            async with app.run_test() as pilot:
+                await pilot.press("p")
+                self.assertIn("Could not paste", str(app.query_one("#status", Static).render()))
+
+        control.paste_selected.assert_not_called()
 
     async def test_enter_executes_selected_node_in_normal_mode(self) -> None:
         control = Mock()

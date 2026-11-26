@@ -39,6 +39,8 @@ class ControlApp(App[None]):
         Binding("enter", "execute_selected", "Execute"),
         Binding("q", "quit", "Quit"),
         Binding("ctrl+c", "quit", show=False),
+        Binding("y", "copy_selected_node", "Copy node"),
+        Binding("p", "paste_selected_node", "Paste node"),
     ]
 
     CSS = """
@@ -703,6 +705,39 @@ class ControlApp(App[None]):
 
     def action_create_node(self) -> None:
         self._show_selection(self._control.create_node())
+
+    def action_copy_selected_node(self) -> None:
+        if self._input_mode is not None:
+            return
+        try:
+            clipboard_text = self._control.copy_selected()
+            if clipboard_text is None:
+                self._show_status("No existing node is selected")
+                return
+            subprocess.run(
+                ["pbcopy"], input=clipboard_text, encoding="utf-8",
+                capture_output=True, check=True,
+            )
+        except Exception as error:
+            self._show_status(f"Could not copy node: {error}")
+            return
+        self._show_status("Copied selected node")
+
+    def action_paste_selected_node(self) -> None:
+        if self._input_mode is not None:
+            return
+        try:
+            clipboard_text = subprocess.run(
+                ["pbpaste"], encoding="utf-8", capture_output=True, check=True,
+            ).stdout
+            node_id = self._control.paste_selected(clipboard_text)
+        except Exception as error:
+            self._show_status(f"Could not paste node: {error}")
+            return
+        if node_id is None:
+            self._show_status("Cannot paste without a selected node and valid Sloon clipboard data")
+        else:
+            self._show_status(f"Pasted node {node_id}")
 
     def action_execute_selected(self) -> None:
         if self._input_mode is not None:

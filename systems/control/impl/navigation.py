@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import json
 from pathlib import Path
 
 from systems.graph_ui.spec.api import GraphUIAPI
 from systems.logical_layout import calculate_layout
-from systems.nodes import Nodes
+from systems.nodes import NodeNotFoundError, Nodes
 from systems.node_types.spec.api import NodeContext, NodeType
 from systems.visible_graph import (
     VisibleGraph,
@@ -26,6 +27,45 @@ _PROPERTY_DEFAULTS = {
     "tags": "",
     "weight": "0",
 }
+
+
+_CLIPBOARD_FORMAT = "sloon-node"
+_CLIPBOARD_VERSION = 1
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    values = dict(pairs)
+    if len(values) != len(pairs):
+        raise ValueError("duplicate JSON key")
+    return values
+
+
+def _clipboard_properties(text: str) -> dict[str, str] | None:
+    try:
+        payload = json.loads(text, object_pairs_hook=_unique_json_object)
+        if not isinstance(payload, dict) or payload.keys() != {
+            "format", "version", "properties",
+        }:
+            return None
+        version = payload["version"]
+        if (
+            payload["format"] != _CLIPBOARD_FORMAT
+            or type(version) is not int
+            or version != _CLIPBOARD_VERSION
+        ):
+            return None
+        properties = payload["properties"]
+        if not isinstance(properties, dict):
+            return None
+        for key, value in properties.items():
+            if not key or not isinstance(value, str):
+                return None
+            # SQLite's text binding requires strings encodable as UTF-8.
+            key.encode("utf-8")
+            value.encode("utf-8")
+        return properties
+    except (ValueError, RecursionError):
+        return None
 
 
 def _effective_properties(properties: dict[str, str]) -> dict[str, str]:
@@ -335,6 +375,39 @@ class _Control:
             return False
         self._nodes.set(selected, "weight", str(weight))
         return True
+
+    def copy_selected(self) -> str | None:
+        selected = self._graph_ui.get_selected_node()
+        if selected is None:
+            return None
+        try:
+            with self._nodes.transaction():
+                properties = self._nodes.get_all(selected)
+        except NodeNotFoundError:
+            return None
+        return json.dumps({
+            "format": _CLIPBOARD_FORMAT,
+            "version": _CLIPBOARD_VERSION,
+            "properties": properties,
+        })
+
+    def paste_selected(self, clipboard_text: str) -> int | None:
+        selected = self._graph_ui.get_selected_node()
+        if selected is None:
+            return None
+        properties = _clipboard_properties(clipboard_text)
+        if properties is None:
+            return None
+
+        with self._nodes.transaction():
+            if not self._nodes.node_exists(selected):
+                return None
+            node_id = self._nodes.create_node()
+            # Property names such as "self" must be passed as data.
+            for key, value in properties.items():
+                self._nodes.set(node_id, key, value)
+            self._nodes.connect(selected, node_id)
+        return node_id
 
     def execute_selected(self) -> bool:
         selected = self._existing_selection()

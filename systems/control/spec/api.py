@@ -80,6 +80,13 @@ Terminal interaction contract:
   and refresh behavior as ``:note``, using the current parameter text and
   persisting changed contents through ``set_selected_param``. ``:param <value>``
   remains the direct inline parameter update command.
+- In normal mode, ``y`` copies the selected node to the system clipboard
+  and ``p`` pastes a copy as an output of the selected node. In Control
+  inputs these keys enter text. Native terminal paste remains a text editing
+  action. Use ``q`` or Ctrl+C to quit from normal mode.
+- Copy and paste report the result in the Control status panel. Missing
+  selection, invalid clipboard data, and clipboard I/O failures do not change
+  the graph. Paste does not write to the clipboard.
 - The command ``:color`` opens an input prefilled with the selected node's
   color. ``:color <value>`` sets it inline. Use ``none`` or submit an empty
   color input to restore the default.
@@ -460,6 +467,39 @@ class ControlAPI(Protocol):
         Return False without changes for an invalid value or when no existing
         node is selected. Otherwise persist through Nodes, keep the
         same selection, and return True.
+        """
+        ...
+
+    def copy_selected(self) -> str | None:
+        """Serialize the selected node's stored properties as clipboard text.
+
+        Read every key and value through Nodes.get_all(), preserving arbitrary
+        keys and empty values. Return None if there is no existing selected
+        node. Copy never changes graph or UI state.
+
+        The clipboard format is a JSON object with exactly three fields:
+        ``"format": "sloon-node"``, ``"version": 1``, and ``"properties"``
+        containing an object of non-empty string keys and string values. An
+        empty properties object is valid. The payload is a snapshot with no
+        workspace identity, node ID, edges, or UI state. The terminal
+        interface writes the returned text to the system clipboard.
+        """
+        ...
+
+    def paste_selected(self, clipboard_text: str) -> int | None:
+        """Paste clipboard properties as a new output of the selected node.
+
+        Return the new node's ID. Create the node with exactly the copied
+        properties and connect the selected node to it in one Nodes
+        transaction. Preserve existing nodes, edges, selection, and UI state.
+        A write failure rolls back both operations and propagates.
+
+        Return None without changing the graph when there is no existing
+        selected node or the text is empty, malformed, or has an unsupported
+        format or version. Reject duplicate JSON keys and invalid properties.
+        Pasting is repeatable and independent of the original node and
+        workspace. The terminal interface reads the system clipboard and
+        leaves its contents intact.
         """
         ...
 
