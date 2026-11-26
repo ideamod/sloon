@@ -6,7 +6,7 @@ import pytest
 
 from systems.control import open_control
 from systems.graph_ui import open_graph_ui
-from systems.nodes import Nodes
+from systems.nodes import Nodes, NodesError
 
 
 PROPERTIES = {
@@ -136,7 +136,6 @@ def test_empty_properties_are_a_valid_copy_and_paste(open_workspace):
     '{"format":"sloon-node","version":1,"properties":{"count":1}}',
     '{"format":"sloon-node","version":1,"properties":{"key":"a","key":"b"}}',
     '{"format":"sloon-node","version":1,"properties":{},"node_id":1}',
-    r'{"format":"sloon-node","version":1,"properties":{"key":"\ud800"}}',
 ])
 def test_invalid_clipboard_contents_leave_graph_unchanged(open_workspace, clipboard):
     nodes, graph_ui, control = open_workspace("invalid.sloon")
@@ -163,6 +162,37 @@ def test_copy_and_paste_require_an_existing_selection(open_workspace, stale_sele
     assert control.copy_selected() is None
     assert control.paste_selected(clipboard) is None
     assert snapshot(nodes) == before
+
+
+def test_paste_rolls_back_properties_rejected_by_nodes(open_workspace, monkeypatch):
+    nodes, graph_ui, control = open_workspace("rejected.sloon")
+    selected = nodes.create_node(title="Destination")
+    neighbor = nodes.create_node(title="Existing output")
+    nodes.connect(selected, neighbor)
+    graph_ui.select_node(selected)
+    before = snapshot(nodes)
+    clipboard = json.dumps({
+        "format": "sloon-node",
+        "version": 1,
+        "properties": {"title": "Partial copy", "rejected": "value"},
+    })
+    set_property = nodes.set
+
+    def reject_property(node_id, key, value):
+        if key == "rejected":
+            assert nodes.get(node_id, "title") == "Partial copy"
+            raise NodesError("property rejected")
+        set_property(node_id, key, value)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(nodes, "set", reject_property)
+        assert control.paste_selected(clipboard) is None
+
+    assert snapshot(nodes) == before
+    assert graph_ui.get_selected_node() == selected
+    pasted = control.paste_selected(clipboard)
+    assert nodes.get_all(pasted) == {"title": "Partial copy", "rejected": "value"}
+    assert nodes.outputs(selected) == [neighbor, pasted]
 
 
 def test_paste_rolls_back_new_node_properties_and_edge_after_failure(open_workspace, monkeypatch):

@@ -4,9 +4,9 @@ Nodes is the sole authority for persistent node records, directed edges, and
 node properties.  It deliberately has no knowledge of layout, rendering,
 selection, collapse state, node execution, or other application workflows.
 
-Every property is an uninterpreted non-empty string key with a string value.
-Nodes does not define property names, defaults, formats, or meanings. An absent
-property and a property containing an empty string are distinct.
+Every property has a non-empty string key and a string value. Both strings
+must be UTF-8 encodable. Nodes treats their contents as uninterpreted text.
+An absent property and a property containing an empty string are distinct.
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ import sqlite3
 class NodesError(ValueError):
     """Base class for public Nodes validation and lookup errors.
 
-    Invalid IDs, empty or non-string property keys, non-string property
-    values, and non-string explicit defaults raise this error. Lookup-specific
-    subclasses identify missing nodes and properties.
+    Invalid IDs, invalid property keys or values, and invalid explicit
+    defaults raise this error. Lookup-specific subclasses identify missing
+    nodes and properties.
     """
 
 
@@ -55,6 +55,11 @@ class Nodes:
     but omits absent properties. Node deletion, property deletion, disconnect,
     and duplicate connect are idempotent. Operations which must read or mutate
     an existing node raise ``NodeNotFoundError`` when it is absent.
+
+    Every operation that takes property keys or values applies the same
+    validation, including the explicit default supplied to get. Invalid
+    property input raises NodesError without partially applying that
+    operation. Storage-specific encoding exceptions do not escape the API.
 
     Mutations commit when no transaction was active on entry. If the shared
     connection already has an active transaction, they join it without

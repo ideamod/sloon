@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from systems.nodes import NodeNotFoundError, Nodes, PropertyNotFoundError
+from systems.nodes import NodeNotFoundError, Nodes, NodesError, PropertyNotFoundError
 
 
 @pytest.fixture
@@ -102,6 +102,68 @@ def test_keys_must_be_nonempty_strings(nodes: Nodes) -> None:
             nodes.set(node, key, "value")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="non-empty string"):
         nodes.get_many([node], [""])
+
+
+@pytest.mark.parametrize("operation", ["get", "get_many", "set", "delete_property", "create_node"])
+def test_non_utf8_keys_raise_nodes_error(nodes: Nodes, operation: str) -> None:
+    node = nodes.create_node(title="original")
+    key = "\ud800"
+    calls = {
+        "get": lambda: nodes.get(node, key),
+        "get_many": lambda: nodes.get_many([node], ["title", key]),
+        "set": lambda: nodes.set(node, key, "value"),
+        "delete_property": lambda: nodes.delete_property(node, key),
+        "create_node": lambda: nodes.create_node(title="partial", **{key: "value"}),
+    }
+
+    with pytest.raises(NodesError):
+        calls[operation]()
+
+    assert nodes.list_nodes() == [node]
+    assert nodes.get_all(node) == {"title": "original"}
+
+
+@pytest.mark.parametrize("operation", ["default", "existing_default", "set", "create_node"])
+def test_non_utf8_values_raise_nodes_error(nodes: Nodes, operation: str) -> None:
+    node = nodes.create_node(title="original")
+    value = "\udfff"
+    calls = {
+        "default": lambda: nodes.get(node, "missing", value),
+        "existing_default": lambda: nodes.get(node, "title", value),
+        "set": lambda: nodes.set(node, "title", value),
+        "create_node": lambda: nodes.create_node(title="partial", invalid=value),
+    }
+
+    with pytest.raises(NodesError):
+        calls[operation]()
+
+    assert nodes.list_nodes() == [node]
+    assert nodes.get_all(node) == {"title": "original"}
+
+
+def test_invalid_create_preserves_work_in_an_active_transaction(nodes: Nodes) -> None:
+    with nodes.transaction():
+        first = nodes.create_node(title="first")
+        with pytest.raises(NodesError):
+            nodes.create_node(title="partial", invalid="\ud800")
+        assert nodes.list_nodes() == [first]
+        second = nodes.create_node(title="second")
+
+    assert nodes.list_nodes() == [first, second]
+
+
+def test_unicode_keys_values_and_empty_strings_round_trip(nodes: Nodes) -> None:
+    key = "日本語😀"
+    value = "α café 🎉"
+    node = nodes.create_node(**{key: value})
+    assert nodes.get(node, key) == value
+    assert nodes.get(node, "absent", value) == value
+
+    nodes.set(node, key, "")
+    assert nodes.get_many([node], [key, "absent"]) == {node: {key: ""}}
+    assert nodes.get_all(node) == {key: ""}
+    nodes.delete_property(node, key)
+    assert nodes.get_all(node) == {}
 
 
 def test_any_property_can_be_deleted_idempotently(nodes: Nodes) -> None:

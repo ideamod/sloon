@@ -8,7 +8,7 @@ from pathlib import Path
 
 from systems.graph_ui.spec.api import GraphUIAPI
 from systems.logical_layout import calculate_layout
-from systems.nodes import NodeNotFoundError, Nodes
+from systems.nodes import NodeNotFoundError, Nodes, NodesError
 from systems.node_types.spec.api import NodeContext, NodeType
 from systems.visible_graph import (
     VisibleGraph,
@@ -55,14 +55,10 @@ def _clipboard_properties(text: str) -> dict[str, str] | None:
         ):
             return None
         properties = payload["properties"]
-        if not isinstance(properties, dict):
+        if not isinstance(properties, dict) or not all(
+            isinstance(value, str) for value in properties.values()
+        ):
             return None
-        for key, value in properties.items():
-            if not key or not isinstance(value, str):
-                return None
-            # SQLite's text binding requires strings encodable as UTF-8.
-            key.encode("utf-8")
-            value.encode("utf-8")
         return properties
     except (ValueError, RecursionError):
         return None
@@ -399,14 +395,17 @@ class _Control:
         if properties is None:
             return None
 
-        with self._nodes.transaction():
-            if not self._nodes.node_exists(selected):
-                return None
-            node_id = self._nodes.create_node()
-            # Property names such as "self" must be passed as data.
-            for key, value in properties.items():
-                self._nodes.set(node_id, key, value)
-            self._nodes.connect(selected, node_id)
+        try:
+            with self._nodes.transaction():
+                if not self._nodes.node_exists(selected):
+                    return None
+                node_id = self._nodes.create_node()
+                # Property names such as "self" must be passed as data.
+                for key, value in properties.items():
+                    self._nodes.set(node_id, key, value)
+                self._nodes.connect(selected, node_id)
+        except NodesError:
+            return None
         return node_id
 
     def execute_selected(self) -> bool:

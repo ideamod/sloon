@@ -44,16 +44,24 @@ def _node_id(value: object) -> int:
     return value
 
 
+def _require_utf8(value: str) -> str:
+    try:
+        str.encode(value, "utf-8")
+    except UnicodeEncodeError:
+        raise NodesError("property text must be UTF-8 encodable") from None
+    return value
+
+
 def _key(value: object) -> str:
     if not isinstance(value, str) or not value:
         raise NodesError("property key must be a non-empty string")
-    return value
+    return _require_utf8(value)
 
 
 def _value(value: object) -> str:
     if not isinstance(value, str):
         raise NodesError("property value must be a string")
-    return value
+    return _require_utf8(value)
 
 
 class Nodes:

@@ -492,11 +492,14 @@ class ControlAPI(Protocol):
         Return the new node's ID. Create the node with exactly the copied
         properties and connect the selected node to it in one Nodes
         transaction. Preserve existing nodes, edges, selection, and UI state.
-        A write failure rolls back both operations and propagates.
+        If Nodes rejects the pasted properties, roll back the transaction
+        and return None. Other storage failures roll back and propagate.
 
         Return None without changing the graph when there is no existing
         selected node or the text is empty, malformed, or has an unsupported
-        format or version. Reject duplicate JSON keys and invalid properties.
+        format or version. Reject duplicate JSON keys and require a string
+        value for each property. Nodes validates admissibility of the keys
+        and values.
         Pasting is repeatable and independent of the original node and
         workspace. The terminal interface reads the system clipboard and
         leaves its contents intact.
