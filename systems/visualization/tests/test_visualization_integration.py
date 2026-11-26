@@ -101,7 +101,7 @@ def test_weight_change_recalculates_vertical_placement(tmp_path: Path) -> None:
             node_width=next(iter(sizes.values())).width,
         )
         viewer = open_visualization(
-            nodes_api, graph_ui, resolve_node_type, layout, geometry
+            nodes_api, graph_ui, resolve_node_type, layout, geometry, workspace_path=tmp_path,
         )
         assert viewer._snapshot.rectangles[upper].y < viewer._snapshot.rectangles[lower].y
 
@@ -153,11 +153,13 @@ def test_revealed_selection_relayouts_and_scrolls_into_view(tmp_path: Path) -> N
             resolve_node_type,
             layout,
             geometry,
+            workspace_path=tmp_path,
         )
         control = open_control(
             nodes_api,
             graph_ui,
             resolve_node_type,
+            workspace_path=tmp_path,
         )
 
         async def exercise_reveal() -> None:
@@ -218,6 +220,7 @@ def test_new_node_with_standard_defaults_opens_and_renders(tmp_path: Path) -> No
             resolve_node_type,
             layout,
             geometry,
+            workspace_path=tmp_path,
         )
 
         rendering, _, _ = _render_snapshot(viewer._snapshot)
@@ -256,6 +259,7 @@ def test_copy_without_target_opens_and_renders(tmp_path: Path) -> None:
             resolve_node_type,
             layout,
             geometry,
+            workspace_path=tmp_path,
         )
 
         rendering, _, _ = _render_snapshot(viewer._snapshot)
@@ -296,6 +300,7 @@ def test_titled_void_assignment_keeps_its_visible_title(tmp_path: Path) -> None:
             resolve_node_type,
             layout,
             geometry,
+            workspace_path=tmp_path,
         )
 
         rendering, _, _ = _render_snapshot(viewer._snapshot)
@@ -339,6 +344,7 @@ def test_compact_geometry_renders_adjacent_borders_and_edges(
             resolve_node_type,
             layout,
             geometry,
+            workspace_path=tmp_path,
         )
 
         upper_rect = geometry.get_rect(upper)
@@ -403,6 +409,7 @@ def test_copy_border_style_integrates_with_collapse_and_id_visibility(
             resolve_node_type,
             layout,
             geometry,
+            workspace_path=tmp_path,
         )
 
         expanded, _, _ = _render_snapshot(viewer._snapshot)

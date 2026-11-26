@@ -10,6 +10,7 @@ Node Types does not own node, edge, or property persistence.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from systems.nodes import Nodes
@@ -40,6 +41,9 @@ class NodeContext:
         node_id:
             Identifier of the current graph node.
 
+        workspace_path:
+            Absolute path to the current workspace selected by the application.
+
         properties:
             Snapshot of the textual properties supplied by the application.
 
@@ -55,6 +59,7 @@ class NodeContext:
     """
 
     node_id: int
+    workspace_path: Path
     properties: dict[str, str]
     nodes: Nodes
 
@@ -93,11 +98,16 @@ def resolve_node_type(type_name: str) -> NodeType:
     """Resolve a node type by its string identifier.
 
     Discovery:
-        Automatically discover implementations in immediate
-        subdirectories of systems/node_types/impl/types/.
+        Discover immediate Python packages in systems/node_types/impl/types/
+        and ~/.sloon/types/. A missing user directory is allowed.
 
-        Each directory exports an object named `node_type`
-        implementing the NodeType protocol.
+        Each package exports an object named `node_type` from its __init__.py.
+        The object implements the NodeType protocol and its `type` attribute
+        determines its identifier independently of the package name. Packages
+        can contain supporting modules and resources and use relative imports.
+
+        User packages require no registration, repository changes, or
+        reinstallation. Changes take effect on the next application launch.
 
     Matching:
         Compare type identifiers exactly, case-sensitively.
@@ -106,8 +116,8 @@ def resolve_node_type(type_name: str) -> NodeType:
         If no matching implementation exists, return the Void type.
 
     Errors:
-        Duplicate identifiers and invalid implementations are
-        configuration errors.
+        Duplicate identifiers within or across discovery locations and
+        invalid implementations are configuration errors.
 
     Side effects:
         Resolution must not call render() or execute().

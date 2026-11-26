@@ -243,7 +243,7 @@ def _execute(arguments: argparse.Namespace) -> Any:
                 from systems.control.app import main
             else:
                 from systems.visualization.app import main
-            main(nodes, graph_ui)
+            main(nodes, graph_ui, workspace.resolve())
             return None
         if arguments.command == "node":
             action = arguments.node_command

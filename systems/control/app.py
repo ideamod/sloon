@@ -772,6 +772,6 @@ class ControlApp(App[None]):
         self.screen.set_focus(None)
 
 
-def main(nodes: Nodes, graph_ui: GraphUIAPI) -> None:
-    control = open_control(nodes, graph_ui, resolve_node_type)
+def main(nodes: Nodes, graph_ui: GraphUIAPI, workspace_path: Path) -> None:
+    control = open_control(nodes, graph_ui, resolve_node_type, workspace_path=workspace_path)
     ControlApp(control).run()

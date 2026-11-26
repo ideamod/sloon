@@ -4,7 +4,7 @@ from unittest.mock import Mock
 from systems.visualization import app
 
 
-def test_main_defaults_missing_weight_to_zero(monkeypatch):
+def test_main_defaults_missing_weight_to_zero(monkeypatch, tmp_path):
     nodes = Mock()
     nodes.list_nodes.return_value = [1]
     nodes.list_edges.return_value = []
@@ -27,7 +27,7 @@ def test_main_defaults_missing_weight_to_zero(monkeypatch):
     viewer = Mock()
     monkeypatch.setattr(app, "open_visualization", Mock(return_value=viewer))
 
-    app.main(nodes, graph_ui)
+    app.main(nodes, graph_ui, tmp_path)
 
     calculate_layout.assert_called_once_with([1], [], {1: 0})
     viewer.run.assert_called_once_with()

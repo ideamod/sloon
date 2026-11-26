@@ -3,6 +3,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import textwrap
 
 import pytest
 
@@ -567,7 +568,8 @@ def test_interactive_control_opens_by_path_or_from_inside_workspace(
 
     import systems.control.app as application
 
-    def fake_main(nodes, _graph_ui):
+    def fake_main(nodes, _graph_ui, workspace_path):
+        assert workspace_path == workspace.resolve()
         calls.append(nodes.list_nodes())
 
     monkeypatch.setattr(application, "main", fake_main)
@@ -595,7 +597,8 @@ def test_application_entry_points_receive_composed_consumers_and_close_storage(
     else:
         import systems.visualization.app as application
 
-    def fake_main(nodes, graph_ui):
+    def fake_main(nodes, graph_ui, workspace_path):
+        assert workspace_path == (tmp_path / "home.sloon").resolve()
         captured["nodes"] = nodes
         captured["graph_ui"] = graph_ui
         assert nodes.list_nodes() == []
@@ -605,3 +608,57 @@ def test_application_entry_points_receive_composed_consumers_and_close_storage(
     assert sloon.main(["--workspace", "home.sloon", command]) == 0
     with pytest.raises(sqlite3.ProgrammingError):
         captured["nodes"].list_nodes()
+
+
+def test_interactive_apps_render_and_execute_external_node_in_selected_workspace(
+    tmp_path: Path,
+    isolated_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.control.app import ControlApp
+    from systems.visualization.impl.visualization import _VisualizationApp
+
+    package = isolated_home / ".sloon" / "types" / "cli_context_probe"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(textwrap.dedent("""
+        from systems.node_types import NodeRender
+
+        class ContextProbe:
+            type = "context-probe"
+
+            def render(self, context):
+                return NodeRender(title=f"{context.node_id} {context.workspace_path}")
+
+            def execute(self, context):
+                context.nodes.set(context.node_id, "seen_workspace", str(context.workspace_path))
+
+        node_type = ContextProbe()
+    """), encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    workspace_name = "selected.sloon"
+    workspace_path = (tmp_path / workspace_name).resolve()
+    selected = ["--workspace", workspace_name]
+    assert sloon.main(["init", "selected"]) == 0
+    assert sloon.main([*selected, "node", "create", "--type", "context-probe"]) == 0
+
+    rendered = []
+
+    def capture_render(app):
+        rendered.append(app._initial_snapshot.titles[1])
+
+    def execute_selected(app):
+        assert app._control.select_node(1)
+        assert app._control.execute_selected()
+
+    monkeypatch.setattr(_VisualizationApp, "run", capture_render)
+    monkeypatch.setattr(ControlApp, "run", execute_selected)
+    assert sloon.main([*selected, "visualize"]) == 0
+    assert sloon.main([*selected, "control"]) == 0
+
+    assert rendered == [f"1 {workspace_path}"]
+    storage = Storage.open(workspace_path)
+    try:
+        assert Nodes(storage.connection()).get(1, "seen_workspace") == str(workspace_path)
+    finally:
+        storage.close()

@@ -1,5 +1,7 @@
 """Application startup for the terminal graph viewer."""
 
+from pathlib import Path
+
 from systems.geometry import calculate_geometry
 from systems.graph_ui.spec.api import GraphUIAPI
 from systems.logical_layout import calculate_layout
@@ -9,7 +11,7 @@ from systems.visualization import measure_node_sizes, open_visualization
 from systems.visible_graph import calculate_visible_graph
 
 
-def main(nodes_api: Nodes, graph_ui: GraphUIAPI) -> None:
+def main(nodes_api: Nodes, graph_ui: GraphUIAPI, workspace_path: Path) -> None:
     visible_graph = calculate_visible_graph(
         nodes_api.list_nodes(),
         nodes_api.list_edges(),
@@ -47,4 +49,5 @@ def main(nodes_api: Nodes, graph_ui: GraphUIAPI) -> None:
         resolve_node_type,
         logical_layout,
         geometry,
+        workspace_path=workspace_path,
     ).run()

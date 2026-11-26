@@ -207,7 +207,10 @@ def make_context(
         assignment.tags,
         assignment.weight,
     )
-    context = NodeContext(node_id, assignment_properties(assignment), MemoryNodes(graph, assignments))
+    context = NodeContext(
+        node_id, Path("/test.sloon"), assignment_properties(assignment),
+        MemoryNodes(graph, assignments),
+    )
     return context, graph, assignments
 
 
@@ -251,10 +254,13 @@ def test_node_context_has_required_immutable_fields() -> None:
 
     assert [field.name for field in fields(NodeContext)] == [
         "node_id",
+        "workspace_path",
         "properties",
         "nodes",
     ]
     assert context.node_id == 1
+    assert context.workspace_path == Path("/test.sloon")
+    assert context.workspace_path.is_absolute()
     assert context.properties == assignment_properties(assignment)
     assert isinstance(context.nodes, MemoryNodes)
     with pytest.raises(FrozenInstanceError):
@@ -435,23 +441,78 @@ def test_resolution_does_not_invoke_behavior(isolated_type_packages) -> None:
     assert resolve("probe").type == "probe"
 
 
-def test_temporary_custom_type_is_discovered_without_resolver_changes(
-    isolated_type_packages,
-) -> None:
-    isolated_type_packages(
-        "custom",
-        """
-        class Custom:
-            type = "custom"
-            def render(self, context):
-                raise NotImplementedError
-            def execute(self, context):
-                raise NotImplementedError
-        node_type = Custom()
-        """,
-    )
+@pytest.fixture
+def user_type_packages(isolated_home):
+    root = isolated_home / ".sloon" / "types"
+    # Restore the import table after each test that loads user packages.
+    previous_modules = set(sys.modules)
 
-    assert resolve("custom").type == "custom"
+    def create(name: str, source: str) -> Path:
+        package = root / name
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text(textwrap.dedent(source), encoding="utf-8")
+        return package
+
+    yield create
+
+    for name, module in list(sys.modules.items()):
+        filename = getattr(module, "__file__", None)
+        if name not in previous_modules and filename and Path(filename).is_relative_to(root):
+            del sys.modules[name]
+
+
+CUSTOM_TYPE = """
+    class Custom:
+        type = "Custom"
+        def render(self, context):
+            raise NotImplementedError
+        def execute(self, context):
+            raise NotImplementedError
+    node_type = Custom()
+"""
+
+
+def test_user_package_and_builtin_resolve_through_same_api(user_type_packages) -> None:
+    package = user_type_packages("text", "from .behavior import node_type")
+    (package / "behavior.py").write_text(textwrap.dedent(CUSTOM_TYPE), encoding="utf-8")
+
+    assert resolve("Custom").type == "Custom"
+    assert resolve("text").type == "text"
+    assert resolve("custom") is resolve("void")
+    assert resolve("unknown") is resolve("void")
+
+
+def test_missing_user_directory_is_allowed(isolated_home) -> None:
+    assert not (isolated_home / ".sloon" / "types").exists()
+    assert resolve("text").type == "text"
+    assert resolve("unknown") is resolve("void")
+
+
+@pytest.mark.parametrize("across_locations", [False, True])
+def test_duplicate_user_identifiers_are_rejected(
+    user_type_packages, across_locations: bool,
+) -> None:
+    if across_locations:
+        user_type_packages("custom", CUSTOM_TYPE.replace('"Custom"', '"text"'))
+        identifier = "text"
+    else:
+        user_type_packages("first", CUSTOM_TYPE)
+        user_type_packages("second", CUSTOM_TYPE)
+        identifier = "Custom"
+
+    with pytest.raises(ValueError, match=f"duplicate node type identifier: '{identifier}'"):
+        resolve("unknown")
+
+
+@pytest.mark.parametrize(
+    "source", ["", "node_type = object()", CUSTOM_TYPE.replace("def execute", "def other")],
+)
+def test_invalid_user_implementation_is_rejected(user_type_packages, source: str) -> None:
+    user_type_packages("invalid", source)
+
+    with pytest.raises(TypeError):
+        resolve("unknown")
+
 
 
 class MutatingTestType:
@@ -645,7 +706,10 @@ def test_copy_rejects_missing_current_graph_node() -> None:
     assignments = MemoryAssignments(graph)
     current = NodeAssignment("copy", "2", "Copy")
     assignments.set(2, "text", "body", "Target")
-    context = NodeContext(1, assignment_properties(current), MemoryNodes(graph, assignments))
+    context = NodeContext(
+        1, Path("/test.sloon"), assignment_properties(current),
+        MemoryNodes(graph, assignments),
+    )
 
     with pytest.raises(NodePresentationError):
         resolve("copy").render(context)

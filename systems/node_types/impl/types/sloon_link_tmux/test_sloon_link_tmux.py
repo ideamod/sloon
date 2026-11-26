@@ -1,5 +1,4 @@
-import hashlib
-import os
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -10,7 +9,10 @@ from systems.node_types.spec.api import NodeContext
 
 
 def _context(param: str) -> NodeContext:
-    return NodeContext(node_id=1, properties={"param": param}, nodes=Mock())
+    return NodeContext(
+        node_id=1, workspace_path=Path("/test.sloon"),
+        properties={"param": param}, nodes=Mock(),
+    )
 
 
 def _new_window_tmux(*args, **kwargs):
@@ -58,7 +60,7 @@ def test_execute_ignores_surrounding_param_whitespace(tmp_path, monkeypatch):
 def test_execute_only_switches_to_existing_workspace(tmp_path, monkeypatch):
     workspace = tmp_path / "home.sloon"
     workspace.mkdir()
-    name = hashlib.sha256(os.fsencode(workspace)).hexdigest()
+    name = str(workspace)
     tmux = Mock()
     tmux.side_effect = lambda *args, **kwargs: (
         Mock(returncode=0) if args[0] == "has-session" else Mock()

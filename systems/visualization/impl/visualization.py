@@ -203,6 +203,7 @@ def _read_presentations(
     node_ids: list[int],
     nodes: Nodes,
     node_type_resolver: Callable[[str], NodeType],
+    workspace_path: Path,
 ) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str], dict[int, int]]:
     titles: dict[int, str] = {}
     border_styles: dict[int, str] = {}
@@ -219,6 +220,7 @@ def _read_presentations(
             presentation = node_type.render(
                 NodeContext(
                     node_id=node_id,
+                    workspace_path=workspace_path,
                     properties=properties,
                     nodes=nodes,
                 )
@@ -266,6 +268,7 @@ def _read_dependency_state(
     nodes: Nodes,
     graph_ui: GraphUIAPI,
     node_type_resolver: Callable[[str], NodeType],
+    workspace_path: Path,
 ) -> _ReadState:
     try:
         raw_nodes = _validate_node_ids(nodes.list_nodes())
@@ -286,6 +289,7 @@ def _read_dependency_state(
             list(visible.nodes),
             nodes,
             node_type_resolver,
+            workspace_path,
         )
     except ValueError:
         raise
@@ -783,10 +787,19 @@ class _StaticGeometry:
 
 
 class _Visualization:
-    def __init__(self, nodes: Nodes, graph_ui: GraphUIAPI, node_type_resolver: Callable[[str], NodeType], snapshot: _Snapshot, theme: Mapping[str, str]) -> None:
+    def __init__(
+        self,
+        nodes: Nodes,
+        graph_ui: GraphUIAPI,
+        node_type_resolver: Callable[[str], NodeType],
+        workspace_path: Path,
+        snapshot: _Snapshot,
+        theme: Mapping[str, str],
+    ) -> None:
         self._nodes = nodes
         self._graph_ui = graph_ui
         self._node_type_resolver = node_type_resolver
+        self._workspace_path = workspace_path
         self._snapshot = snapshot
         self._theme = theme
 
@@ -798,6 +811,7 @@ class _Visualization:
             self._nodes,
             self._graph_ui,
             self._node_type_resolver,
+            self._workspace_path,
         )
 
     def refresh(self, logical_layout: LogicalLayoutAPI | None = None, geometry: GeometryAPI | None = None) -> None:
@@ -924,6 +938,8 @@ def open_visualization(
     node_type_resolver: Callable[[str], NodeType],
     logical_layout: LogicalLayoutAPI,
     geometry: GeometryAPI,
+    *,
+    workspace_path: Path,
 ) -> _Visualization:
     """Create a viewer over application-owned graph and placement APIs."""
     theme = _load_theme()
@@ -932,6 +948,7 @@ def open_visualization(
             nodes_api,
             graph_ui,
             node_type_resolver,
+            workspace_path,
         )
         nodes = list(state.visible_graph.nodes)
         edges = list(state.visible_graph.edges)
@@ -958,4 +975,4 @@ def open_visualization(
         raise
     except Exception as error:
         raise ValueError("invalid visualization dependencies") from error
-    return _Visualization(nodes_api, graph_ui, node_type_resolver, snapshot, theme)
+    return _Visualization(nodes_api, graph_ui, node_type_resolver, workspace_path, snapshot, theme)

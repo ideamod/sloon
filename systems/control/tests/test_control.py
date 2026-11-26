@@ -104,9 +104,11 @@ def open_node_assignments(connection):
     return LegacyAssignments(_nodes_for(connection))
 
 
-def open_control(graph, graph_ui, node_assignments, resolver):
+def open_control(
+    graph, graph_ui, node_assignments, resolver, *, workspace_path=Path("/test.sloon"),
+):
     """Adapt the legacy fixture vocabulary to the unified dependency."""
-    return open_nodes_control(graph.nodes, graph_ui, resolver)
+    return open_nodes_control(graph.nodes, graph_ui, resolver, workspace_path=workspace_path)
 
 
 def legacy_node_info(node_id, value=None, properties=None):
@@ -368,7 +370,7 @@ class ControlTests(unittest.TestCase):
             ValueError("node deleted"),
             {3: {"title": "Match Three", "type": "text", "status": "warning"}},
         )
-        control = open_nodes_control(nodes, Mock(), Mock())
+        control = open_nodes_control(nodes, Mock(), Mock(), workspace_path=Path("/test.sloon"))
 
         self.assertEqual(
             control.search_titles("match"),
@@ -1040,11 +1042,13 @@ class ControlTests(unittest.TestCase):
         self.graph_ui.select_node(selected)
         node_type = Mock()
         resolver = Mock(return_value=node_type)
+        workspace_path = Path(self.temporary_directory.name) / "test.sloon"
         control = open_control(
             self.graph,
             self.graph_ui,
             self.node_assignments,
             resolver,
+            workspace_path=workspace_path,
         )
 
         self.assertTrue(control.execute_selected())
@@ -1053,6 +1057,8 @@ class ControlTests(unittest.TestCase):
         context = node_type.execute.call_args.args[0]
         self.assertIsInstance(context, NodeContext)
         self.assertEqual(context.node_id, selected)
+        self.assertEqual(context.workspace_path, workspace_path)
+        self.assertTrue(context.workspace_path.is_absolute())
         self.assertEqual(context.properties["type"], assignment.type)
         self.assertEqual(context.properties["param"], assignment.param)
         self.assertEqual(context.properties["title"], assignment.title)

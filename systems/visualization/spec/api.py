@@ -8,6 +8,7 @@ property set state, persist selection, execute node commands, or own a database
 connection.
 """
 
+from pathlib import Path
 from typing import Callable, Protocol
 
 from systems.geometry.spec.api import GeometryAPI
@@ -63,8 +64,8 @@ class VisualizationAPI(Protocol):
         by one reserved row for its plain decimal ID. For each node, the viewer
         gets its property set from the retained ``Nodes``. It
         resolves the property set's type and calls ``NodeType.render()`` with a
-        ``NodeContext`` containing the visible node, its property set, Graph,
-        and Nodes APIs. Visualization interprets missing application properties
+        ``NodeContext`` containing the visible node ID, the absolute workspace
+        path, its effective properties, and the Nodes API. Visualization interprets missing application properties
         with its presentation defaults (including ``void``, ``none``, empty
         text, and weight zero). Nodes itself does not define those defaults.
         Visualization never calls ``NodeType.execute()`` and neither
@@ -363,8 +364,13 @@ def open_visualization(
     node_type_resolver: Callable[[str], NodeType],
     logical_layout: LogicalLayoutAPI,
     geometry: GeometryAPI,
+    *,
+    workspace_path: Path,
 ) -> VisualizationAPI:
     """Create a viewer over existing graph, display, and placement APIs.
+
+    The caller supplies the absolute path of the workspace backing Nodes.
+    The viewer passes it to every render context, including during refresh.
 
     Opening reads complete graph nodes and edges; collapsed IDs, the current
     selected node, width, height, and ID visibility; calculates Visible Graph;

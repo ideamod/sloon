@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from systems.graph_ui.spec.api import GraphUIAPI
 from systems.logical_layout import calculate_layout
@@ -44,10 +45,12 @@ class _Control:
         nodes: Nodes,
         graph_ui: GraphUIAPI,
         resolve_node_type: Callable[[str], NodeType],
+        workspace_path: Path,
     ) -> None:
         self._nodes = nodes
         self._graph_ui = graph_ui
         self._resolve_node_type = resolve_node_type
+        self._workspace_path = workspace_path
 
     def select_node(self, node_id: int) -> bool:
         if not self.reveal_node(node_id):
@@ -342,6 +345,7 @@ class _Control:
         node_type.execute(
             NodeContext(
                 node_id=selected,
+                workspace_path=self._workspace_path,
                 properties=properties,
                 nodes=self._nodes,
             )
@@ -370,5 +374,7 @@ def open_control(
     nodes: Nodes,
     graph_ui: GraphUIAPI,
     resolve_node_type: Callable[[str], NodeType],
+    *,
+    workspace_path: Path,
 ) -> ControlAPI:
-    return _Control(nodes, graph_ui, resolve_node_type)
+    return _Control(nodes, graph_ui, resolve_node_type, workspace_path)

@@ -249,9 +249,13 @@ def measure_node_sizes(node_ids, assignments, resolver, *args, **kwargs):
     )
 
 
+TEST_WORKSPACE = Path("/test.sloon")
+
+
 def open_visualization(graph, graph_ui, assignments, resolver, layout, geometry):
     return open_nodes_visualization(
-        FakeNodes(graph, assignments), graph_ui, resolver, layout, geometry
+        FakeNodes(graph, assignments), graph_ui, resolver, layout, geometry,
+        workspace_path=TEST_WORKSPACE,
     )
 
 
@@ -1164,6 +1168,8 @@ def test_normal_node_uses_solid_border_from_node_type_render() -> None:
     assert rendered_rows(viewer)[2][:12] == "└──────────┘"
     assert len(node_type.render_calls) == 1
     assert node_type.render_calls[0].node_id == 1
+    assert node_type.render_calls[0].workspace_path == TEST_WORKSPACE
+    assert node_type.render_calls[0].workspace_path.is_absolute()
     assert node_type.render_calls[0].properties["type"] == "normal"
 
 

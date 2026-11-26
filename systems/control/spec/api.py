@@ -90,6 +90,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
+from pathlib import Path
 from typing import Protocol
 
 from systems.graph_ui.spec.api import GraphUIAPI
@@ -471,7 +472,8 @@ class ControlAPI(Protocol):
         1. Read its textual node properties and supply Control defaults for
            missing application properties.
         2. Resolve its Node Type.
-        3. Build NodeContext.
+        3. Build NodeContext with the selected node ID, the absolute workspace
+           path, the effective properties, and the Nodes API.
         4. Call NodeType.execute(context).
         5. Return True if execute returns normally.
 
@@ -488,6 +490,8 @@ def open_control(
     nodes: Nodes,
     graph_ui: GraphUIAPI,
     resolve_node_type: Callable[[str], NodeType],
+    *,
+    workspace_path: Path,
 ) -> ControlAPI:
     """Open graph controls over existing system APIs.
 
@@ -504,6 +508,9 @@ def open_control(
         Node Type resolver:
             Resolve and execute node behavior through the public
             ``resolve_node_type`` interface.
+
+    The caller supplies the absolute path of the workspace backing Nodes.
+    Control passes it to every node execution context.
 
     Control does not own the dependencies or their connections.
 
