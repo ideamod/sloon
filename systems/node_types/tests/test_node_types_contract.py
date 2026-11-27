@@ -637,6 +637,26 @@ def test_copy_renders_direct_target_title_with_dashed_border() -> None:
     assert resolve("copy").render(context) == NodeRender("Target", "dashed")
 
 
+def test_copy_inherits_title_for_large_id_reported_present_by_nodes() -> None:
+    target = 2**63
+    context, _, assignments = make_context(
+        NodeAssignment("copy", str(target)), other_nodes=(target,)
+    )
+    assignments.set(target, "text", "", "Large target")
+
+    assert resolve("copy").render(context) == NodeRender("Large target", "dashed")
+
+
+def test_copy_falls_back_when_decimal_conversion_fails() -> None:
+    previous_limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(640)
+    try:
+        context, _, _ = make_context(NodeAssignment("copy", "9" * 641, "Copy"))
+        assert resolve("copy").render(context) == NodeRender("Copy", "dashed")
+    finally:
+        sys.set_int_max_str_digits(previous_limit)
+
+
 def test_copy_preserves_its_own_title() -> None:
     context, _, _ = copy_context(
         NodeAssignment("text", "body", "Target"),

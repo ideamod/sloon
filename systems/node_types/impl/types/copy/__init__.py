@@ -42,18 +42,16 @@ class _CopyNodeType:
 
     @staticmethod
     def _target_node_id(node_id: int, param: str) -> int:
-        if not param.isascii() or not param.isdigit():
-            raise NodePresentationError(
-                f"copy assignment for node {node_id!r} has an invalid "
-                f"target node ID: {param!r}"
-            )
-        target_node_id = int(param)
-        if target_node_id <= 0:
-            raise NodePresentationError(
-                f"copy assignment for node {node_id!r} has an invalid "
-                f"target node ID: {param!r}"
-            )
-        return target_node_id
+        digits = param.lstrip("0")
+        if digits.isascii() and digits.isdigit():
+            try:
+                return int(digits)
+            except ValueError:
+                pass
+        raise NodePresentationError(
+            f"copy assignment for node {node_id!r} has an invalid "
+            f"target node ID: {param!r}"
+        )
 
 
 node_type = _CopyNodeType()

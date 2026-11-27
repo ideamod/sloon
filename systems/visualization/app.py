@@ -8,6 +8,7 @@ from systems.logical_layout import calculate_layout
 from systems.nodes import Nodes
 from systems.node_types import resolve_node_type
 from systems.visualization import measure_node_sizes, open_visualization
+from systems.visualization.impl.visualization import _presentation_weight
 from systems.visible_graph import calculate_visible_graph
 
 
@@ -23,7 +24,7 @@ def main(nodes_api: Nodes, graph_ui: GraphUIAPI, workspace_path: Path) -> None:
     node_height = graph_ui.get_node_height()
     show_node_ids = graph_ui.get_show_node_ids()
     weights = {
-        node_id: int(properties.get("weight", "0"))
+        node_id: _presentation_weight(properties.get("weight", "0"))
         for node_id, properties in nodes_api.get_many(nodes, ["weight"]).items()
     }
     logical_layout = calculate_layout(nodes, edges, weights)

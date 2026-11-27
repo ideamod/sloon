@@ -21,6 +21,44 @@ def _open(path: Path) -> tuple[sqlite3.Connection, Nodes]:
     return connection, Nodes(connection)
 
 
+@pytest.mark.parametrize("absent", [2**63, 10**5000], ids=["above-storage-range", "huge"])
+def test_large_positive_ids_are_valid_but_absent(nodes: Nodes, absent: int) -> None:
+    node = nodes.create_node(title="Existing")
+    nodes.connect(node, node)
+
+    assert nodes.node_exists(absent) is False
+    assert nodes.inputs(absent) == []
+    assert nodes.outputs(absent) == []
+    nodes.delete_node(absent)
+    nodes.disconnect(absent, node)
+    nodes.disconnect(node, absent)
+
+    for operation in (
+        lambda: nodes.get(absent, "title", "fallback"),
+        lambda: nodes.set(absent, "title", "New"),
+        lambda: nodes.get_all(absent),
+        lambda: nodes.get_many([node, absent], ["title"]),
+        lambda: nodes.get_many([absent, node], []),
+        lambda: nodes.delete_property(absent, "title"),
+        lambda: nodes.connect(absent, node),
+        lambda: nodes.connect(node, absent),
+    ):
+        with pytest.raises(NodeNotFoundError):
+            operation()
+
+    assert nodes.list_nodes() == [node]
+    assert nodes.get_all(node) == {"title": "Existing"}
+    assert nodes.list_edges() == [(node, node)]
+
+
+@pytest.mark.parametrize("invalid", [True, 0, -1, "1", 1.0])
+def test_invalid_ids_still_raise_validation_errors(nodes: Nodes, invalid) -> None:
+    with pytest.raises(NodesError, match="positive integer"):
+        nodes.node_exists(invalid)
+    with pytest.raises(NodesError, match="positive integer"):
+        nodes.disconnect(2**63, invalid)
+
+
 def test_constructor_uses_borrowed_connection_and_requires_foreign_keys(
     tmp_path: Path,
 ) -> None:

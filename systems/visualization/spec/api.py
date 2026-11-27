@@ -65,15 +65,51 @@ class VisualizationAPI(Protocol):
         gets its property set from the retained ``Nodes``. It
         resolves the property set's type and calls ``NodeType.render()`` with a
         ``NodeContext`` containing the visible node ID, the absolute workspace
-        path, its effective properties, and the Nodes API. Visualization interprets missing application properties
-        with its presentation defaults (including ``void``, ``none``, empty
-        text, and weight zero). Nodes itself does not define those defaults.
+        path, its effective properties, and the Nodes API. The same property
+        interpretation applies at startup (including initial layout), explicit
+        refresh, and polling. Every property map permitted by Nodes is accepted
+        for Visualization's own interpretation. Defaults and fallbacks apply
+        independently per visible node and are never written to Nodes.
+
+        - ``title``: UTF-8 text is displayed literally with the existing
+          wrapping and truncation. CRLF, CR, and LF become spaces before
+          wrapping. Other C0 and C1 control characters and DEL are omitted
+          from display text. An absent title, empty title, or title made empty
+          by omitting controls uses ``NodeRender.title``, with the same text
+          handling. If that result is empty, the interior is blank.
+        - ``weight``: Text accepted by Python's ``int()``, including its
+          configured conversion limit, is supplied to Logical Layout for
+          vertical ordering. Absent or unconvertible text uses zero.
+        - ``color``: Exact lowercase ``green``, ``red``, ``blue``,
+          ``white``, ``gray``, ``orange``, and ``yellow`` select themed
+          border colors. An absent or unsupported value, or a missing
+          corresponding theme entry, uses the default border color for the
+          current selection state.
+        - ``status``: Exact lowercase ``none``, ``progress``, ``success``,
+          ``warning``, and ``failure`` select the corresponding status
+          indicator color. An absent or unsupported value uses ``none``.
+        - ``type``: Exact, case-sensitive identifiers select discovered Node
+          Types renderers. An absent value uses ``void``. Unrecognized text,
+          including empty text, resolves to Void through the Node Types
+          resolver. Renderer and resolver failures continue to follow the
+          dependency failure contract.
+        - ``param``: Visualization passes text through to Node Types, using
+          empty text when absent. For built-in Copy presentation, an ASCII
+          decimal positive node ID can supply an inherited title. An absent,
+          malformed, out-of-range, missing, or cyclic target ends inheritance
+          at that link while retaining the dashed border and any title found
+          so far. Other built-in renderers do not use ``param``.
+
+        Visualization ignores other keys, including ``note`` and ``tags``.
+        The renderer receives a copy of the stored properties with the existing
+        defaults supplied for absent keys, including empty note and tags.
         Visualization never calls ``NodeType.execute()`` and neither
         Visualization nor a conforming ``render()`` call modifies Graph or
         Nodes.
 
         The main rectangle contains the property set title using Visualization's
-        existing wrapping and truncation behavior. When that title is empty,
+        existing wrapping and truncation behavior. When that title is absent
+        or empty after removing unsupported controls,
         it uses ``NodeRender.title`` instead, allowing a copy node to inherit
         the title supplied by the node it copies. ``NodeRender.border_style``
         selects the border.
@@ -347,9 +383,9 @@ def measure_node_sizes(
     integer of at least 1, and ``show_node_ids`` must be a bool. ``node_ids``
     is normally the visible-node snapshot returned by Visible Graph and must
     contain unique integers.
-    ``ValueError`` is raised for duplicate IDs, invalid dimensions, an invalid
-    property set result; dependency lookup errors otherwise propagate. No
-    visualization-specific public size type is introduced; the existing
+    ``ValueError`` is raised for duplicate IDs, invalid dimensions, or a
+    property result that is not a dictionary of text keys and values.
+    Dependency lookup errors otherwise propagate. The existing
     geometry ``Size`` is returned directly. For an empty ``node_ids`` list,
     the result is empty and no shared occupied width is needed. Logical Layout
     and Geometry receive only these sizes and remain independent of property set
@@ -378,17 +414,18 @@ def open_visualization(
     ``NodeType.render()``. It then accepts the supplied layout and geometry as
     the initial visible display snapshot. The property set title is the primary
     source of text inside each node, with ``NodeRender.title`` as the fallback
-    when it is empty; ``NodeRender.border_style`` is the source of its border
-    style. The viewer retains the stateful supplied dependencies for refresh,
-    but creates no persistence, opens no SQLite connection, and takes
+    described in :meth:`VisualizationAPI.run`. ``NodeRender.border_style``
+    supplies the border style. The viewer retains the supplied dependencies
+    for refresh, but creates no persistence, opens no SQLite connection, and takes
     ownership of none of them.
 
     The layout and geometry must each contain exactly the nodes currently
     returned by Visible Graph. Geometry rectangles are occupied envelopes
     rather than main-node rectangles, and their dimensions must match
     :func:`measure_node_sizes` for those node IDs using the supplied property set
-    API and current graph-UI width, height, and ID visibility. A mismatch or
-    invalid property set result raises ``ValueError`` and no viewer is returned.
+    API and current graph-UI width, height, and ID visibility. A mismatch or a
+    property result that is not a dictionary of text keys and values raises
+    ``ValueError`` and no viewer is returned.
     An empty visible graph, empty layout, and empty geometry form a valid
     initial snapshot and require no property set lookups.
 

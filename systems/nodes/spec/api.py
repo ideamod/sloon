@@ -44,7 +44,19 @@ class Nodes:
     IDs are positive, monotonically allocated SQLite AUTOINCREMENT values.
     IDs belonging to committed nodes are never reused, including after node
     deletion. An allocation made only inside a rolled-back transaction may be
-    allocated again because it was never committed. Edges are unique pairs;
+    allocated again because it was never committed.
+
+    An ID argument may be any positive Python ``int``, regardless of magnitude.
+    Booleans, other types (including subclasses of ``int``), and non-positive
+    integers raise ``NodesError``. Storage-specific integer limits and binding
+    errors are internal to Nodes. For a valid ID with no stored node,
+    ``node_exists()`` returns False, ``inputs()`` and ``outputs()`` return empty
+    lists, and ``delete_node()`` and ``disconnect()`` are no-ops. Both endpoints
+    of ``disconnect()`` are still validated. ``get()``, ``set()``,
+    ``get_all()``, ``get_many()``, ``delete_property()``, and ``connect()``
+    raise ``NodeNotFoundError`` when a requested node is absent.
+
+    Edges are unique pairs;
     duplicate connects and missing disconnects/deletes are idempotent.
     Self-loops and cycles are allowed.
     Lists are deterministic: node IDs and neighbor IDs are ascending, and

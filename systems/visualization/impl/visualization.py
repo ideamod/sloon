@@ -68,6 +68,7 @@ def _load_theme(path: Path = _THEME_PATH) -> dict[str, str]:
         raise ValueError(f"Visualization theme missing key {sorted(missing)[0]!r}")
     return theme
 _LINE_BREAKS = re.compile(r"\r\n|\r|\n")
+_TITLE_CONTROLS = re.compile(r"[\x00-\x09\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _BORDER_GLYPHS = {
     "solid": ("─", "│"),
     "dashed": ("╌", "╎"),
@@ -183,11 +184,11 @@ def _properties_title(properties: object) -> str:
     return _effective_properties(properties)["title"]
 
 
-def _weight(value: str) -> int:
+def _presentation_weight(value: str) -> int:
     try:
         return int(value)
-    except ValueError as error:
-        raise ValueError("node weight must be textual integer") from error
+    except ValueError:
+        return 0
 
 
 def _read_titles(
@@ -212,9 +213,8 @@ def _read_presentations(
     weights: dict[int, int] = {}
     for node_id in node_ids:
         properties = _effective_properties(nodes.get_all(node_id))
-        title = properties["title"]
-        if properties["status"] not in _STATUS_STYLES:
-            raise ValueError("node status is invalid")
+        title = _TITLE_CONTROLS.sub("", properties["title"])
+        status = properties["status"]
         node_type = node_type_resolver(properties["type"])
         try:
             presentation = node_type.render(
@@ -237,11 +237,11 @@ def _read_presentations(
             raise ValueError(
                 f"unsupported node border style: {presentation.border_style!r}"
             )
-        titles[node_id] = title or presentation.title
+        titles[node_id] = title or _TITLE_CONTROLS.sub("", presentation.title)
         border_styles[node_id] = presentation.border_style
-        statuses[node_id] = properties["status"]
+        statuses[node_id] = status if status in _STATUS_STYLES else "none"
         colors[node_id] = properties.get("color", "")
-        weights[node_id] = _weight(properties["weight"])
+        weights[node_id] = _presentation_weight(properties["weight"])
     return titles, border_styles, statuses, colors, weights
 
 

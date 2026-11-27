@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
+import sqlite3
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable
@@ -18,6 +20,8 @@ from systems.geometry import calculate_geometry
 from systems.geometry.spec.schema import NODE_WIDTH, Geometry, Rect, Size
 from systems.logical_layout import calculate_layout
 from systems.logical_layout.spec.schema import ComponentLayout, LogicalLayout
+from systems.nodes import Nodes
+from systems.visualization import app as visualization_app
 from systems.node_types.spec.api import NodeContext, NodeRender
 from systems.visualization import (
     measure_node_sizes as measure_nodes_sizes,
@@ -1948,22 +1952,103 @@ def test_note_change_is_not_displayed_and_does_not_change_geometry() -> None:
     assert viewer._snapshot.rectangles == accepted_rectangles
 
 
-def test_invalid_assignment_status_is_rejected() -> None:
-    graph = FakeGraph(nodes=[1], edges=[])
-    graph_ui = FakeGraphUI(show_node_ids=False)
-    assignments = FakeNodeAssignments(
-        {1: NodeAssignment("text", "", "Title", "complete")}
-    )
+def test_arbitrary_stored_properties_display_at_startup_refresh_and_poll(
+    monkeypatch, tmp_path
+) -> None:
+    viewers = []
+    monkeypatch.setattr(visualization_impl._Visualization, "run", lambda viewer: viewers.append(viewer))
+    workspace = tmp_path / "properties.sloon"
+    with closing(sqlite3.connect(workspace)) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        nodes = Nodes(connection)
+        root = nodes.create_node(title="Root")
+        empty = nodes.create_node()
+        valid = {
+            "type": "copy", "param": str(root), "title": "",
+            "weight": " +1_0 ", "color": "green", "status": "success",
+            "extension": "uninterpreted",
+        }
+        changing = nodes.create_node(**valid)
+        malformed = {
+            "type": "COPY", "title": "\x1b\x85", "weight": "NaN",
+            "color": "green-selected", "status": "complete", "extension": "\x00",
+        }
+        other = nodes.create_node(**malformed)
+        for child in (empty, changing, other):
+            nodes.connect(root, child)
 
-    with pytest.raises(ValueError, match="node status is invalid"):
-        open_visualization(
-            graph,
-            graph_ui,
-            assignments,
-            FakeNodeTypeResolver(),
-            logical_layout((1,),),
-            FakeGeometry(Geometry({1: Rect(0, 0, 12, 3)}, 12, 3)),
-        )
+        graph_ui = FakeGraphUI(show_node_ids=False)
+        visualization_app.main(nodes, graph_ui, workspace)
+        viewer = viewers[0]
+        startup = viewer._snapshot
+
+        def check_node(snapshot, node_id, title, horizontal, status, border):
+            text, width, _ = _render_snapshot(snapshot, viewer._theme)
+            rect = snapshot.rectangles[node_id]
+            assert text.plain.splitlines()[rect.y + 1][rect.x + 1:rect.x + 11].strip() == title
+            assert text.plain.splitlines()[rect.y][rect.x + 1] == horizontal
+            assert style_at(text, width, rect.x, rect.y).color == Style(
+                color=viewer._theme[status]
+            ).color
+            assert style_at(text, width, rect.x + 1, rect.y).color == Style(
+                color=viewer._theme[border]
+            ).color
+
+        def check_valid(snapshot):
+            assert snapshot.weights == {root: 0, empty: 0, changing: 10, other: 0}
+            assert snapshot.rectangles[changing].y < snapshot.rectangles[empty].y
+            check_node(snapshot, changing, "Root", "╌", "status-icon-color-success", "node-color-green")
+
+        check_valid(startup)
+        for blank in (empty, other):
+            check_node(startup, blank, "", "─", "status-icon-color-none", "border-color-normal")
+        viewer.refresh()
+        assert viewer._snapshot == startup
+        assert nodes.get_all(empty) == {}
+        assert nodes.get_all(changing) == valid
+        assert nodes.get_all(other) == malformed
+
+        async def exercise_polling():
+            app = _VisualizationApp(viewer._snapshot, viewer._poll_snapshot, viewer._theme)
+            async with app.run_test() as pilot:
+                canvas = app.query_one(_GraphCanvas)
+                nodes.set(root, "title", "Updated")
+                for key, value in malformed.items():
+                    nodes.set(changing, key, value)
+                await pilot.pause(0.25)
+                snapshot = canvas._snapshot
+                assert snapshot.weights[changing] == 0
+                assert snapshot.rectangles[empty].y < snapshot.rectangles[changing].y
+                check_node(snapshot, changing, "", "─", "status-icon-color-none", "border-color-normal")
+                check_node(snapshot, root, "Updated", "─", "status-icon-color-none", "border-color-normal")
+                assert nodes.get_all(changing) == {**valid, **malformed}
+
+                nodes.set(root, "title", "Root")
+                for key, value in valid.items():
+                    nodes.set(changing, key, value)
+                await pilot.pause(0.25)
+                assert canvas._snapshot == startup
+                check_valid(canvas._snapshot)
+                assert nodes.get_all(changing) == valid
+
+        asyncio.run(exercise_polling())
+
+
+@pytest.mark.parametrize("bad_target", ["xyz", "0", "9" * 20, "9" * 5000])
+def test_copy_stops_inheritance_at_malformed_target(monkeypatch, tmp_path, bad_target):
+    viewers = []
+    monkeypatch.setattr(visualization_impl._Visualization, "run", lambda viewer: viewers.append(viewer))
+    workspace = tmp_path / "copy.sloon"
+    with closing(sqlite3.connect(workspace)) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        nodes = Nodes(connection)
+        target = nodes.create_node(type="copy", title="Inherited", param=bad_target)
+        copy = nodes.create_node(type="copy", param="0" * 5000 + str(target))
+        visualization_app.main(nodes, FakeGraphUI(), workspace)
+        viewer = viewers[0]
+        assert viewer._snapshot.titles[copy] == "Inherited"
+        assert viewer._snapshot.border_styles[copy] == "dashed"
+        assert nodes.get_all(target)["param"] == bad_target
 
 
 def test_collapse_refresh_recalculates_layout_geometry_and_nested_state() -> None:

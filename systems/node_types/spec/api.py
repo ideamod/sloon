@@ -94,6 +94,16 @@ class NodePresentationError(ValueError):
     """Raised when a node cannot be presented correctly."""
 
 
+# Built-in Copy presentation
+#
+# Copy interprets param as a positive ASCII decimal node ID. Leading zeroes
+# are allowed. Copy delegates existence checks to Nodes for every converted
+# positive ID, independent of the storage backend. An absent, malformed,
+# unconvertible, nonexistent, or cyclic target ends traversal. Copy returns a
+# dashed border and the first non-empty title found, starting with its own
+# title, or an empty title if none was found.
+
+
 def resolve_node_type(type_name: str) -> NodeType:
     """Resolve a node type by its string identifier.
 

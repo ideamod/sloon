@@ -12,6 +12,7 @@ from ..spec.api import (
     PropertyNotFoundError,
 )
 _MISSING = object()
+_SQLITE_MAX_INTEGER = 2**63 - 1
 
 _CREATE_NODES = """
 CREATE TABLE IF NOT EXISTS graph_nodes (
@@ -42,6 +43,19 @@ def _node_id(value: object) -> int:
     if type(value) is not int or value <= 0:
         raise NodesError("node ID must be a positive integer")
     return value
+
+
+def _bind_node_id(value: object) -> int | None:
+    node_id = _node_id(value)
+    # NULL matches no ID in the queries that accept a possibly absent node.
+    return node_id if node_id <= _SQLITE_MAX_INTEGER else None
+
+
+def _missing_node(node_id: int) -> NodeNotFoundError:
+    if node_id > _SQLITE_MAX_INTEGER:
+        # Decimal formatting itself may fail for arbitrarily large integers.
+        return NodeNotFoundError("node does not exist")
+    return NodeNotFoundError(f"node does not exist: {node_id}")
 
 
 def _require_utf8(value: str) -> str:
@@ -78,12 +92,11 @@ class Nodes:
             self._connection.commit()
 
     def _require_node(self, node_id: int) -> None:
-        node_id = _node_id(node_id)
         row = self._connection.execute(
-            "SELECT 1 FROM graph_nodes WHERE id = ?", (node_id,)
+            "SELECT 1 FROM graph_nodes WHERE id = ?", (_bind_node_id(node_id),)
         ).fetchone()
         if row is None:
-            raise NodeNotFoundError(f"node does not exist: {node_id}")
+            raise _missing_node(node_id)
 
     def create_node(self, **fields: str) -> int:
         self._require_open()
@@ -106,14 +119,13 @@ class Nodes:
     def delete_node(self, node_id: int) -> None:
         self._require_open()
         transaction_was_active = self._connection.in_transaction
-        self._connection.execute("DELETE FROM graph_nodes WHERE id = ?", (_node_id(node_id),))
+        self._connection.execute("DELETE FROM graph_nodes WHERE id = ?", (_bind_node_id(node_id),))
         self._commit(transaction_was_active)
 
     def node_exists(self, node_id: int) -> bool:
         self._require_open()
-        node_id = _node_id(node_id)
         return self._connection.execute(
-            "SELECT 1 FROM graph_nodes WHERE id = ?", (node_id,)
+            "SELECT 1 FROM graph_nodes WHERE id = ?", (_bind_node_id(node_id),)
         ).fetchone() is not None
 
     def list_nodes(self) -> list[int]:
@@ -168,11 +180,12 @@ class Nodes:
             return {}
         placeholders = ",".join("?" for _ in ids)
         existing = {row[0] for row in self._connection.execute(
-            f"SELECT id FROM graph_nodes WHERE id IN ({placeholders})", ids
+            f"SELECT id FROM graph_nodes WHERE id IN ({placeholders})",
+            [_bind_node_id(node_id) for node_id in ids],
         )}
         missing = next((node_id for node_id in ids if node_id not in existing), None)
         if missing is not None:
-            raise NodeNotFoundError(f"node does not exist: {missing}")
+            raise _missing_node(missing)
         result: dict[int, dict[str, str]] = {node_id: {} for node_id in ids}
         if requested:
             key_marks = ",".join("?" for _ in requested)
@@ -211,22 +224,22 @@ class Nodes:
         transaction_was_active = self._connection.in_transaction
         self._connection.execute(
             "DELETE FROM graph_edges WHERE source_id = ? AND target_id = ?",
-            (_node_id(source), _node_id(target)),
+            (_bind_node_id(source), _bind_node_id(target)),
         )
         self._commit(transaction_was_active)
 
     def inputs(self, node_id: int) -> list[int]:
         self._require_open()
-        node_id = _node_id(node_id)
         return [row[0] for row in self._connection.execute(
-            "SELECT source_id FROM graph_edges WHERE target_id = ? ORDER BY source_id", (node_id,)
+            "SELECT source_id FROM graph_edges WHERE target_id = ? ORDER BY source_id",
+            (_bind_node_id(node_id),),
         )]
 
     def outputs(self, node_id: int) -> list[int]:
         self._require_open()
-        node_id = _node_id(node_id)
         return [row[0] for row in self._connection.execute(
-            "SELECT target_id FROM graph_edges WHERE source_id = ? ORDER BY target_id", (node_id,)
+            "SELECT target_id FROM graph_edges WHERE source_id = ? ORDER BY target_id",
+            (_bind_node_id(node_id),),
         )]
 
     def list_edges(self) -> list[tuple[int, int]]:
