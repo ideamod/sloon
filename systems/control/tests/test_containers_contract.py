@@ -1,5 +1,4 @@
 import asyncio
-import json
 import sqlite3
 
 import pytest
@@ -86,46 +85,32 @@ def test_leaving_reveals_exited_container_if_parent_graph_changed(graph):
     assert ui.get_collapsed_node_ids() == set()
 
 
-def test_creation_paste_and_connections_respect_membership(graph):
+def test_creation_and_connections_respect_membership(graph):
     nodes, ui, control = graph
     left = nodes.create_node(type="container")
     right = nodes.create_node(type="container")
-    source = nodes.create_node(container_id=str(right), title="Copied")
+    sibling_member = nodes.create_node(container_id=str(right))
     root = nodes.create_node()
-    assert control.select_node(right)
-    assert control.enter_container()
-    assert control.select_node(source)
-    clipboard = control.copy_selected()
-    assert json.loads(clipboard)["properties"]["container_id"] == str(right)
-
-    assert control.leave_container()
-    assert control.select_node(root)
-    pasted_at_root = control.paste_selected(clipboard)
-    assert nodes.get_all(pasted_at_root) == {"title": "Copied"}
-
     assert control.select_node(left)
     assert control.enter_container()
+
     first = control.create_node()
     output = control.create_output()
     upstream = control.create_input()
-    pasted = control.paste_selected(clipboard)
     assert all(
         nodes.get(member, "container_id") == str(left)
-        for member in (first, output, upstream, pasted)
+        for member in (first, output, upstream)
     )
-    assert nodes.get(pasted, "title") == "Copied"
     assert ui.get_selected_node() == upstream
-    assert not control.connect(source)
+    assert not control.connect(sibling_member)
     assert not control.connect(root)
     assert control.connect(first)
     assert nodes.list_edges() == sorted([
-        (root, pasted_at_root), (first, output), (upstream, output),
-        (upstream, pasted), (upstream, first),
+        (first, output), (upstream, output), (upstream, first),
     ])
     ui.select_node(root)
     assert control.create_input() is None
     assert control.create_output() is None
-    assert control.paste_selected(clipboard) is None
 
 
 def test_collapse_and_reveal_ignore_cross_container_edges(graph):

@@ -81,10 +81,12 @@ Terminal interaction contract:
   and refresh behavior as ``:note``, using the current parameter text and
   persisting changed contents through ``set_selected_param``. ``:param <value>``
   remains the direct inline parameter update command.
-- In normal mode, ``y`` copies the selected node to the system clipboard
-  and ``p`` pastes a copy as an output of the selected node. In Control
-  inputs these keys enter text. Native terminal paste remains a text editing
-  action. Use Ctrl+C to quit from normal mode.
+- In normal mode, ``y`` copies the selected node and ``Y`` also copies
+  its outgoing-reachable nodes in the active graph. Both include the full
+  contents of every copied container. ``p`` pastes the fragment with its
+  root as an output of the selected node. In Control inputs these keys
+  enter text. Native terminal paste remains a text editing action.
+  Use Ctrl+C to quit from normal mode.
 - In normal mode, ``g`` enters the selected container and ``q`` leaves the
   active container. Within an input these keys enter text. At root, ``q``
   has no effect.
@@ -511,40 +513,53 @@ class ControlAPI(Protocol):
         """
         ...
 
-    def copy_selected(self) -> str | None:
-        """Serialize the selected node's stored properties as clipboard text.
+    def copy_selected(self, *, include_outputs: bool = False) -> str | None:
+        """Serialize a graph fragment rooted at the selected node.
 
-        Read every key and value through Nodes.get_all(), preserving arbitrary
-        keys and empty values. Return None if there is no existing selected
-        node. Copy never changes graph or UI state.
+        Return None for absent or stale selection, or when an outgoing copy
+        starts outside the active graph. With include_outputs, follow outgoing
+        edges within the selected node's graph. For each included container,
+        collect all immediate members, even disconnected ones, and descend
+        into nested containers. Visit each node once, including in cyclic data.
+        Keep all edges between included nodes of the same graph. Read only
+        Nodes topology and container membership to decide what to include.
+        Collapse and visibility are irrelevant. Copy changes no stored state.
 
-        The clipboard format is a JSON object with exactly three fields:
-        ``"format": "sloon-node"``, ``"version": 1``, and ``"properties"``
-        containing an object of non-empty string keys and string values. An
-        empty properties object is valid. The payload is a snapshot with no
-        workspace identity, node ID, edges, or UI state. The terminal
+        The JSON object has exactly five fields. ``format`` is
+        ``"sloon-graph-fragment"``, ``version`` is the integer 1, and
+        ``root`` is the original positive integer ID of the selected node.
+        ``nodes`` is an array of objects with exactly ``id`` and
+        ``properties`` fields. Each properties object contains every stored
+        property, including original containment text, using non-empty string
+        keys and string values. Empty properties are valid. ``edges`` is an
+        array of two-element integer arrays [source, target] in original IDs.
+        The payload carries no workspace identity or UI state. The terminal
         interface writes the returned text to the system clipboard.
         """
         ...
 
     def paste_selected(self, clipboard_text: str) -> int | None:
-        """Paste clipboard properties as a new output of the selected node.
+        """Paste a fragment as a new output of the selected node.
 
-        Return the new node's ID. Copy properties except for container_id,
-        which is determined by the active graph. Connect the selected node
-        in the active graph to the new node in one Nodes transaction.
-        Preserve existing nodes, edges, selection, and UI state.
-        If Nodes rejects the pasted properties, roll back the transaction
-        and return None. Other storage failures roll back and propagate.
+        Allocate fresh IDs, restore the fragment edges using those IDs, and
+        connect the selected node to the new root in one Nodes transaction.
+        The root's source membership identifies the top-level graph. Assign
+        its members to the active graph, omitting container_id at root.
+        Remap other membership IDs to newly created containers. Preserve
+        every other property verbatim, including param and arbitrary text
+        references. Return the new root ID and preserve selection and UI state.
 
-        Return None without changing the graph when there is no existing
-        selected node in the active graph or the text is empty, malformed,
-        or has an unsupported format or version. Reject duplicate JSON keys
-        and require a string value for each property. Nodes validates the
-        keys and values.
-        Pasting is repeatable and independent of the original node and
-        workspace. The terminal interface reads the system clipboard and
-        leaves its contents intact.
+        Return None for invalid clipboard text or when no existing node in the
+        active graph is selected. Reject unknown formats and versions,
+        duplicate keys, node IDs or edges, dangling references, containment
+        outside the fragment below the top level, cross-graph edges, and
+        cycles in edges or containment. The top-level graph may reference
+        its original parent outside the fragment. Nodes validates admissible
+        property keys and values. Nodes validation failures roll back and
+        return None. Other storage failures roll back and propagate.
+
+        Each paste is independent of prior pastes and of the source workspace.
+        The terminal interface reads the clipboard and leaves its contents intact.
         """
         ...
 

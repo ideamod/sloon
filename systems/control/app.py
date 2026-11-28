@@ -41,6 +41,7 @@ class ControlApp(App[None]):
         Binding("q", "leave_container", "Leave container"),
         Binding("ctrl+c", "quit", show=False),
         Binding("y", "copy_selected_node", "Copy node"),
+        Binding("Y", "copy_selected_node(True)", "Copy tree"),
         Binding("p", "paste_selected_node", "Paste node"),
     ]
 
@@ -717,11 +718,11 @@ class ControlApp(App[None]):
         if self._input_mode is None and self._control.leave_container():
             self._show_status("Left container")
 
-    def action_copy_selected_node(self) -> None:
+    def action_copy_selected_node(self, include_outputs: bool = False) -> None:
         if self._input_mode is not None:
             return
         try:
-            clipboard_text = self._control.copy_selected()
+            clipboard_text = self._control.copy_selected(include_outputs=include_outputs)
             if clipboard_text is None:
                 self._show_status("No existing node is selected")
                 return
@@ -732,7 +733,7 @@ class ControlApp(App[None]):
         except Exception as error:
             self._show_status(f"Could not copy node: {error}")
             return
-        self._show_status("Copied selected node")
+        self._show_status("Copied selected tree" if include_outputs else "Copied selected node")
 
     def action_paste_selected_node(self) -> None:
         if self._input_mode is not None:

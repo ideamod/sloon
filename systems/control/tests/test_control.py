@@ -1626,34 +1626,37 @@ class ControlAppTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_clipboard_keys_copy_and_paste_without_replacing_clipboard(self) -> None:
         control = Mock()
-        clipboard_text = '{"format":"sloon-node","version":1,"properties":{}}'
-        control.copy_selected.return_value = clipboard_text
+        clipboard_text = "serialized fragment"
+        control.copy_selected.side_effect = ["serialized single node", clipboard_text]
         control.paste_selected.return_value = 7
         app = ControlApp(control)
         copied = subprocess.CompletedProcess(["pbcopy"], 0)
         pasted = subprocess.CompletedProcess(["pbpaste"], 0, stdout=clipboard_text)
 
-        with patch("systems.control.app.subprocess.run", side_effect=[copied, pasted, pasted]) as run:
+        with patch("systems.control.app.subprocess.run", side_effect=[copied, copied, pasted, pasted]) as run:
             async with app.run_test() as pilot:
-                await pilot.press("y", "p", "p")
+                await pilot.press("y", "Y", "p", "p")
                 self.assertIn("Pasted", str(app.query_one("#status", Static).render()))
 
-        control.copy_selected.assert_called_once_with()
+        self.assertEqual(control.copy_selected.call_args_list, [
+            call(include_outputs=False), call(include_outputs=True),
+        ])
         self.assertEqual(control.paste_selected.call_args_list, [call(clipboard_text)] * 2)
         self.assertEqual([entry.args[0] for entry in run.call_args_list], [
-            ["pbcopy"], ["pbpaste"], ["pbpaste"],
+            ["pbcopy"], ["pbcopy"], ["pbpaste"], ["pbpaste"],
         ])
-        self.assertEqual(run.call_args_list[0].kwargs["input"], clipboard_text)
+        self.assertEqual(run.call_args_list[0].kwargs["input"], "serialized single node")
+        self.assertEqual(run.call_args_list[1].kwargs["input"], clipboard_text)
 
     async def test_clipboard_keys_inside_text_input_do_not_copy_or_paste_nodes(self) -> None:
         control = Mock()
         app = ControlApp(control)
         with patch("systems.control.app.subprocess.run") as run:
             async with app.run_test() as pilot:
-                await pilot.press(":", "y", "p")
+                await pilot.press(":", "y", "Y", "p")
                 command = app.query_one("#node-command", Input)
                 self.assertTrue(command.has_focus)
-                self.assertEqual(command.value, "yp")
+                self.assertEqual(command.value, "yYp")
                 await pilot.press("escape")
 
         run.assert_not_called()
@@ -1664,7 +1667,7 @@ class ControlAppTests(unittest.IsolatedAsyncioTestCase):
         control = Mock()
         control.paste_selected.return_value = 7
         app = ControlApp(control)
-        clipboard_text = '{"format":"sloon-node","version":1,"properties":{}}'
+        clipboard_text = "serialized fragment"
 
         with patch("systems.control.app.subprocess.run") as run:
             async with app.run_test() as pilot:

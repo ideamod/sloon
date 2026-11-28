@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
-import json
 from pathlib import Path
 
 from systems.graph_ui.spec.api import GraphUIAPI
@@ -19,6 +18,7 @@ from systems.visible_graph import (
 )
 
 from ..spec.api import NODE_COLORS, ControlAPI, Direction, NodeInfo, TitleSearchResult
+from .clipboard import collect_fragment, decode_fragment, encode_fragment
 
 _PROPERTY_DEFAULTS = {
     "type": "void",
@@ -29,41 +29,6 @@ _PROPERTY_DEFAULTS = {
     "tags": "",
     "weight": "0",
 }
-
-
-_CLIPBOARD_FORMAT = "sloon-node"
-_CLIPBOARD_VERSION = 1
-
-
-def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    values = dict(pairs)
-    if len(values) != len(pairs):
-        raise ValueError("duplicate JSON key")
-    return values
-
-
-def _clipboard_properties(text: str) -> dict[str, str] | None:
-    try:
-        payload = json.loads(text, object_pairs_hook=_unique_json_object)
-        if not isinstance(payload, dict) or payload.keys() != {
-            "format", "version", "properties",
-        }:
-            return None
-        version = payload["version"]
-        if (
-            payload["format"] != _CLIPBOARD_FORMAT
-            or type(version) is not int
-            or version != _CLIPBOARD_VERSION
-        ):
-            return None
-        properties = payload["properties"]
-        if not isinstance(properties, dict) or not all(
-            isinstance(value, str) for value in properties.values()
-        ):
-            return None
-        return properties
-    except (ValueError, RecursionError):
-        return None
 
 
 def _effective_properties(properties: dict[str, str]) -> dict[str, str]:
@@ -451,43 +416,71 @@ class _Control:
         self._nodes.set(selected, "weight", str(weight))
         return True
 
-    def copy_selected(self) -> str | None:
-        selected = self._graph_ui.get_selected_node()
-        if selected is None:
-            return None
+    def copy_selected(self, *, include_outputs: bool = False) -> str | None:
         try:
             with self._nodes.transaction():
-                properties = self._nodes.get_all(selected)
+                selected = self._graph_ui.get_selected_node()
+                if selected is None:
+                    return None
+                root_properties = self._nodes.get_all(selected)
+                properties = {selected: root_properties}
+                edges: list[tuple[int, int]] = []
+                if include_outputs or root_properties.get("type") == "container":
+                    node_ids = self._nodes.list_nodes()
+                    membership = self._nodes.get_many(node_ids, ["type", "container_id"])
+                    if include_outputs:
+                        requested = self._graph_ui.get_active_container_id()
+                        if requested:
+                            # Resolve stale UI state without using the projection for copying.
+                            _, _, requested = filter_container_graph(
+                                node_ids, [], membership, requested,
+                            )
+                        if root_properties.get("container_id", "") != requested:
+                            return None
+                    included, edges = collect_fragment(
+                        selected, membership, self._nodes.list_edges(),
+                        include_outputs=include_outputs,
+                    )
+                    for node_id in included - properties.keys():
+                        properties[node_id] = self._nodes.get_all(node_id)
         except NodeNotFoundError:
             return None
-        return json.dumps({
-            "format": _CLIPBOARD_FORMAT,
-            "version": _CLIPBOARD_VERSION,
-            "properties": properties,
-        })
+        return encode_fragment(selected, properties, edges)
 
     def paste_selected(self, clipboard_text: str) -> int | None:
-        selected = self._graph_ui.get_selected_node()
-        if selected is None:
-            return None
-        properties = _clipboard_properties(clipboard_text)
-        if properties is None:
+        fragment = decode_fragment(clipboard_text)
+        if fragment is None:
             return None
 
         try:
             with self._nodes.transaction():
+                selected = self._graph_ui.get_selected_node()
+                if selected is None:
+                    return None
                 members, _, active_id = self._active_graph()
                 if selected not in members:
                     return None
-                node_id = self._create_node(active_id)
-                properties.pop("container_id", None)
-                # Property names such as "self" must be passed as data.
-                for key, value in properties.items():
-                    self._nodes.set(node_id, key, value)
-                self._nodes.connect(selected, node_id)
+
+                new_ids = {
+                    original_id: self._nodes.create_node()
+                    for original_id in fragment.properties
+                }
+                for original_id, properties in fragment.properties.items():
+                    node_id = new_ids[original_id]
+                    parent = fragment.parents.get(original_id)
+                    container_id = active_id if parent is None else str(new_ids[parent])
+                    if container_id:
+                        self._nodes.set(node_id, "container_id", container_id)
+                    for key, value in properties.items():
+                        if key != "container_id":
+                            self._nodes.set(node_id, key, value)
+                for source, target in fragment.edges:
+                    self._nodes.connect(new_ids[source], new_ids[target])
+                new_root = new_ids[fragment.root]
+                self._nodes.connect(selected, new_root)
         except NodesError:
             return None
-        return node_id
+        return new_root
 
     def execute_selected(self) -> bool:
         selected = self._existing_selection()
