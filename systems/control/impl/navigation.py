@@ -412,13 +412,11 @@ class _Control:
         selected = self._existing_selection()
         if selected is None:
             return False
-        properties = _effective_properties(self._nodes.get_all(selected))
-        node_type = self._resolve_node_type(properties["type"])
+        node_type = self._resolve_node_type(self._nodes.get(selected, "type", "void"))
         node_type.execute(
             NodeContext(
                 node_id=selected,
                 workspace_path=self._workspace_path,
-                properties=properties,
                 nodes=self._nodes,
             )
         )

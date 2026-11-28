@@ -22,10 +22,10 @@ class _FileNodeType:
     type = "file"
 
     def render(self, context: NodeContext) -> NodeRender:
-        return NodeRender(title=context.properties.get("title", ""), border_style="solid")
+        return NodeRender(title=context.nodes.get(context.node_id, "title", ""), border_style="solid")
 
     def execute(self, context: NodeContext) -> None:
-        path = Path(context.properties.get("param", ""))
+        path = Path(context.nodes.get(context.node_id, "param", ""))
         if not path.is_file():
             raise ValueError(f"file does not exist: {str(path)!r}")
         if path.suffix.lower() not in _EDITABLE_SUFFIXES:

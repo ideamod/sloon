@@ -1060,9 +1060,9 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(context.node_id, selected)
         self.assertEqual(context.workspace_path, workspace_path)
         self.assertTrue(context.workspace_path.is_absolute())
-        self.assertEqual(context.properties["type"], assignment.type)
-        self.assertEqual(context.properties["param"], assignment.param)
-        self.assertEqual(context.properties["title"], assignment.title)
+        self.assertEqual(context.nodes.get(context.node_id, "type"), assignment.type)
+        self.assertEqual(context.nodes.get(context.node_id, "param"), assignment.param)
+        self.assertEqual(context.nodes.get(context.node_id, "title"), assignment.title)
         self.assertIsInstance(context.nodes, Nodes)
         self.assertEqual(self.graph_ui.get_selected_node(), selected)
 
@@ -1082,8 +1082,7 @@ class ControlTests(unittest.TestCase):
 
         resolver.assert_called_once_with("void")
         context = node_type.execute.call_args.args[0]
-        self.assertEqual(context.properties["type"], "void")
-        self.assertEqual(context.properties["param"], "")
+        self.assertEqual(context.nodes.get_all(context.node_id), {})
         self.assertIsNone(self.node_assignments.get(selected))
 
     def test_execute_rejects_missing_selection_without_resolving(self) -> None:

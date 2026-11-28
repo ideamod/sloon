@@ -13,7 +13,7 @@ class _CopyNodeType:
             )
 
         current_node_id = context.node_id
-        properties = context.properties
+        properties = context.nodes.get_all(current_node_id)
         title = properties.get("title", "")
         visited = {context.node_id}
 

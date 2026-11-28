@@ -36,14 +36,14 @@ class SloonLinkTmux:
     type = "sloon-link-tmux"
 
     def render(self, context: NodeContext) -> NodeRender:
-        return NodeRender(title=context.properties.get("title", ""),
+        return NodeRender(title=context.nodes.get(context.node_id, "title", ""),
                           border_style="dashed")
 
     def execute(self, context: NodeContext) -> None:
         if not os.environ.get("TMUX"):
             raise RuntimeError("sloon-link-tmux requires a tmux client")
 
-        raw = context.properties.get("param", "").strip()
+        raw = context.nodes.get(context.node_id, "param", "").strip()
         if not raw:
             raise ValueError("param must contain a .sloon path")
         path = Path(raw).expanduser()

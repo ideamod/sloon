@@ -11,7 +11,7 @@ from systems.node_types.spec.api import NodeContext
 def _context(param: str) -> NodeContext:
     return NodeContext(
         node_id=1, workspace_path=Path("/test.sloon"),
-        properties={"param": param}, nodes=Mock(),
+        nodes=Mock(**{"get.return_value": param}),
     )
 
 

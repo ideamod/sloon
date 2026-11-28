@@ -18,12 +18,12 @@ class CmdTerminal:
 
     def render(self, context: NodeContext) -> NodeRender:
         return NodeRender(
-            title=context.properties.get("title", ""),
+            title=context.nodes.get(context.node_id, "title", ""),
             border_style="solid",
         )
 
     def execute(self, context: NodeContext) -> None:
-        command = context.properties.get("param", "")
+        command = context.nodes.get(context.node_id, "param", "")
 
         if not command.strip():
             raise ValueError("Empty command")

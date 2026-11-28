@@ -65,7 +65,8 @@ class VisualizationAPI(Protocol):
         gets its property set from the retained ``Nodes``. It
         resolves the property set's type and calls ``NodeType.render()`` with a
         ``NodeContext`` containing the visible node ID, the absolute workspace
-        path, its effective properties, and the Nodes API. The same property
+        path, and the Nodes API. The renderer reads any properties it needs
+        through Nodes. The same Visualization property
         interpretation applies at startup (including initial layout), explicit
         refresh, and polling. Every property map permitted by Nodes is accepted
         for Visualization's own interpretation. Defaults and fallbacks apply
@@ -93,16 +94,10 @@ class VisualizationAPI(Protocol):
           including empty text, resolves to Void through the Node Types
           resolver. Renderer and resolver failures continue to follow the
           dependency failure contract.
-        - ``param``: Visualization passes text through to Node Types, using
-          empty text when absent. For built-in Copy presentation, an ASCII
-          decimal positive node ID can supply an inherited title. An absent,
-          malformed, out-of-range, missing, or cyclic target ends inheritance
-          at that link while retaining the dashed border and any title found
-          so far. Other built-in renderers do not use ``param``.
 
-        Visualization ignores other keys, including ``note`` and ``tags``.
-        The renderer receives a copy of the stored properties with the existing
-        defaults supplied for absent keys, including empty note and tags.
+        Visualization ignores other keys, including ``param``, ``note``,
+        and ``tags``. Built-in Copy interprets its own ``param`` through Nodes
+        and can return an inherited title.
         Visualization never calls ``NodeType.execute()`` and neither
         Visualization nor a conforming ``render()`` call modifies Graph or
         Nodes.

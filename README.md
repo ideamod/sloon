@@ -86,6 +86,37 @@ python -m pip install pytest
 python -m pytest
 ```
 
+### Custom Node Types
+
+Create a package with an `__init__.py` under `~/.sloon/types/` and export
+`node_type` with a unique, case-sensitive `type` identifier. Set that
+identifier as the node's stored `type` to use the package.
+
+```python
+from systems.node_types import NodeContext, NodeRender
+
+
+class ExampleType:
+    type = "example"
+
+    def render(self, context: NodeContext) -> NodeRender:
+        title = context.nodes.get(context.node_id, "title", "")
+        return NodeRender(title=title)
+
+    def execute(self, context: NodeContext) -> None:
+        note = context.nodes.get(context.node_id, "param", "")
+        context.nodes.set(context.node_id, "note", note)
+
+
+node_type = ExampleType()
+```
+
+The context carries `node_id`, `workspace_path`, and `nodes`. Read the
+properties each method needs through Nodes and choose defaults and fallbacks
+in the Node Type. To distinguish a missing key from a stored empty string,
+check for the key in `context.nodes.get_all(context.node_id)`. Keep
+`render()` read-only. `execute()` may explicitly update Nodes.
+
 ## Project status
 
 Sloon is in early development. Its interfaces, architecture, and workspace format may change.

@@ -8,7 +8,7 @@ class Cmd:
 
     def render(self, context: NodeContext) -> NodeRender:
         return NodeRender(
-            title=context.properties.get("title", ""),
+            title=context.nodes.get(context.node_id, "title", ""),
             border_style="solid",
         )
 
@@ -16,7 +16,7 @@ class Cmd:
         context.nodes.set(context.node_id, "status", "progress")
 
         try:
-            command = context.properties.get("param", "")
+            command = context.nodes.get(context.node_id, "param", "")
 
             if not command.strip():
                 raise ValueError("Empty command")

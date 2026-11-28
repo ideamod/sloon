@@ -74,15 +74,6 @@ _BORDER_GLYPHS = {
     "dashed": ("╌", "╎"),
 }
 _STATUS_STYLES = frozenset(("none", "progress", "success", "warning", "failure"))
-_PROPERTY_DEFAULTS = {
-    "type": "void",
-    "title": "",
-    "param": "",
-    "status": "none",
-    "note": "",
-    "tags": "",
-    "weight": "0",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,7 +160,8 @@ def _validate_edges(edges: object, nodes: list[int]) -> list[tuple[int, int]]:
     return result
 
 
-def _effective_properties(properties: object) -> dict[str, str]:
+def _read_properties(nodes: Nodes, node_id: int) -> dict[str, str]:
+    properties = nodes.get_all(node_id)
     if not isinstance(properties, dict):
         raise ValueError("node properties must be a dict")
     if any(
@@ -177,11 +169,7 @@ def _effective_properties(properties: object) -> dict[str, str]:
         for key, value in properties.items()
     ):
         raise ValueError("node properties must contain text keys and values")
-    return {**_PROPERTY_DEFAULTS, **properties}
-
-
-def _properties_title(properties: object) -> str:
-    return _effective_properties(properties)["title"]
+    return properties
 
 
 def _presentation_weight(value: str) -> int:
@@ -189,15 +177,6 @@ def _presentation_weight(value: str) -> int:
         return int(value)
     except ValueError:
         return 0
-
-
-def _read_titles(
-    node_ids: list[int], nodes: Nodes
-) -> dict[int, str]:
-    return {
-        node_id: _properties_title(nodes.get_all(node_id))
-        for node_id in node_ids
-    }
 
 
 def _read_presentations(
@@ -212,16 +191,15 @@ def _read_presentations(
     colors: dict[int, str] = {}
     weights: dict[int, int] = {}
     for node_id in node_ids:
-        properties = _effective_properties(nodes.get_all(node_id))
-        title = _TITLE_CONTROLS.sub("", properties["title"])
-        status = properties["status"]
-        node_type = node_type_resolver(properties["type"])
+        properties = _read_properties(nodes, node_id)
+        title = _TITLE_CONTROLS.sub("", properties.get("title", ""))
+        status = properties.get("status", "none")
+        node_type = node_type_resolver(properties.get("type", "void"))
         try:
             presentation = node_type.render(
                 NodeContext(
                     node_id=node_id,
                     workspace_path=workspace_path,
-                    properties=properties,
                     nodes=nodes,
                 )
             )
@@ -241,7 +219,7 @@ def _read_presentations(
         border_styles[node_id] = presentation.border_style
         statuses[node_id] = status if status in _STATUS_STYLES else "none"
         colors[node_id] = properties.get("color", "")
-        weights[node_id] = _presentation_weight(properties["weight"])
+        weights[node_id] = _presentation_weight(properties.get("weight", "0"))
     return titles, border_styles, statuses, colors, weights
 
 
@@ -326,7 +304,8 @@ def measure_node_sizes(
     nodes = _validate_node_ids(node_ids)
     width, height = _validate_dimensions(node_width, node_height)
     show_ids = _validate_show_node_ids(show_node_ids)
-    _read_titles(nodes, nodes_api)
+    for node_id in nodes:
+        _read_properties(nodes_api, node_id)
     if not nodes:
         return {}
     occupied_width = (

@@ -7,7 +7,7 @@ class _LinkNodeType:
     type = "link"
 
     def render(self, context: NodeContext) -> NodeRender:
-        return NodeRender(title=context.properties.get("title", ""), border_style="solid")
+        return NodeRender(title=context.nodes.get(context.node_id, "title", ""), border_style="solid")
 
     def execute(self, context: NodeContext) -> None:
         raise NotImplementedError

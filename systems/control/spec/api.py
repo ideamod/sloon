@@ -512,11 +512,11 @@ class ControlAPI(Protocol):
         Return False if no existing graph node is selected.
 
         Otherwise:
-        1. Read its textual node properties and supply Control defaults for
-           missing application properties.
+        1. Read the selected node's stored type, using "void" when absent.
         2. Resolve its Node Type.
         3. Build NodeContext with the selected node ID, the absolute workspace
-           path, the effective properties, and the Nodes API.
+           path, and the Nodes API. The Node Type reads any required
+           properties through Nodes.
         4. Call NodeType.execute(context).
         5. Return True if execute returns normally.
 

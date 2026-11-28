@@ -179,6 +179,9 @@ class MemoryNodes:
         value = self.assignments.get(node_id) or NodeAssignment("void", "")
         return assignment_properties(value)
 
+    def get(self, node_id: int, key: str, default: str) -> str:
+        return self.get_all(node_id).get(key, default)
+
     def set(self, node_id: int, key: str, value: object) -> None:
         values = self.get_all(node_id)
         values[key] = value
@@ -208,7 +211,7 @@ def make_context(
         assignment.weight,
     )
     context = NodeContext(
-        node_id, Path("/test.sloon"), assignment_properties(assignment),
+        node_id, Path("/test.sloon"),
         MemoryNodes(graph, assignments),
     )
     return context, graph, assignments
@@ -255,13 +258,11 @@ def test_node_context_has_required_immutable_fields() -> None:
     assert [field.name for field in fields(NodeContext)] == [
         "node_id",
         "workspace_path",
-        "properties",
         "nodes",
     ]
     assert context.node_id == 1
     assert context.workspace_path == Path("/test.sloon")
     assert context.workspace_path.is_absolute()
-    assert context.properties == assignment_properties(assignment)
     assert isinstance(context.nodes, MemoryNodes)
     with pytest.raises(FrozenInstanceError):
         context.node_id = 2  # type: ignore[misc]
@@ -300,7 +301,7 @@ def test_node_context_assignments_can_read_and_update_note() -> None:
         )
     )
 
-    assert context.properties["note"] == "Before"
+    assert context.nodes.get_all(context.node_id)["note"] == "Before"
     context.nodes.set(context.node_id, "note", "  After\n😀  ")
 
     assert assignments.get(context.node_id) == NodeAssignment(
@@ -313,7 +314,7 @@ def test_node_context_assignments_can_read_and_update_tags() -> None:
         NodeAssignment("text", "", "Title", "progress", "Note", "before")
     )
 
-    assert context.properties["tags"] == "before"
+    assert context.nodes.get_all(context.node_id)["tags"] == "before"
     context.nodes.set(context.node_id, "tags", "  python, café, 😀  ")
 
     assert assignments.get(context.node_id) == NodeAssignment(
@@ -326,7 +327,7 @@ def test_node_context_assignments_expose_and_preserve_weight() -> None:
         NodeAssignment("text", "", "Title", weight=-7)
     )
 
-    assert context.properties["weight"] == -7
+    assert context.nodes.get_all(context.node_id)["weight"] == -7
     context.nodes.set(context.node_id, "param", "changed")
 
     assert assignments.get(context.node_id) == NodeAssignment(
@@ -519,7 +520,7 @@ class MutatingTestType:
     type = "test-mutation"
 
     def render(self, context: NodeContext) -> NodeRender:
-        return NodeRender(str(context.properties["title"]))
+        return NodeRender(context.nodes.get(context.node_id, "title", ""))
 
     def execute(self, context: NodeContext) -> None:
         context.nodes.create_node(type="created-by-test", param="parameter", title="Created")
@@ -531,10 +532,10 @@ def test_execution_occurs_only_when_explicitly_invoked() -> None:
     )
     node_type = MutatingTestType()
 
-    node_type.render(context)
+    assert node_type.render(context) == NodeRender("Test")
 
     assert graph.get_nodes() == [1]
-    assert assignment_properties(assignments.get(1)) == context.properties
+    assert assignments.get(1) == NodeAssignment("test-mutation", "", "Test")
 
 
 def test_execution_can_mutate_graph_and_assignments_through_context() -> None:
@@ -591,7 +592,6 @@ def test_unknown_falls_back_to_void_without_changing_assignment() -> None:
     render = resolve(assignment.type).render(context)
 
     assert render == NodeRender("", "solid")
-    assert context.properties == assignment_properties(assignment)
     assert assignments.get(1) == assignment
 
 
@@ -600,6 +600,16 @@ def test_text_resolves_and_renders_assignment_title_solid() -> None:
     context, _, _ = make_context(assignment)
 
     assert resolve("text").render(context) == NodeRender("Text title", "solid")
+
+
+def test_text_reads_current_title_through_nodes() -> None:
+    context, _, _ = make_context(NodeAssignment("text", "", "Before"))
+    text = resolve("text")
+    assert text.render(context) == NodeRender("Before")
+
+    context.nodes.set(context.node_id, "title", "After")
+
+    assert text.render(context) == NodeRender("After")
 
 
 def test_text_render_does_not_mutate_persistent_apis() -> None:
@@ -724,10 +734,9 @@ def test_copy_with_multi_node_cycle_renders_best_available_title() -> None:
 def test_copy_rejects_missing_current_graph_node() -> None:
     graph = MemoryGraph(2)
     assignments = MemoryAssignments(graph)
-    current = NodeAssignment("copy", "2", "Copy")
     assignments.set(2, "text", "body", "Target")
     context = NodeContext(
-        1, Path("/test.sloon"), assignment_properties(current),
+        1, Path("/test.sloon"),
         MemoryNodes(graph, assignments),
     )
 

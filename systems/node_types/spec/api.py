@@ -44,12 +44,11 @@ class NodeContext:
         workspace_path:
             Absolute path to the current workspace selected by the application.
 
-        properties:
-            Snapshot of the textual properties supplied by the application.
-
         nodes:
-            Full public Nodes API. Node types may perform explicit mutations
-            during execution. Rendering remains read-only; execution does not
+            Full public Nodes API. Each node type reads the stored data it
+            needs and interprets missing or malformed values for its own
+            behavior. Rendering remains read-only. Node types may perform
+            explicit mutations during execution, and execution does not
             implicitly change status.
 
     The context is immutable as a container, but the APIs referenced
@@ -60,7 +59,6 @@ class NodeContext:
 
     node_id: int
     workspace_path: Path
-    properties: dict[str, str]
     nodes: Nodes
 
 
@@ -76,14 +74,15 @@ class NodeType(Protocol):
 
         Must not execute node behavior.
 
-        May read Nodes through context.
+        Read any required properties through ``context.nodes``.
         """
         ...
 
     def execute(self, context: NodeContext) -> None:
         """Execute type-specific behavior.
 
-        May read or modify Nodes through context.
+        Read any required properties through ``context.nodes``. May modify
+        Nodes through context.
 
         Execution is explicitly initiated by the caller.
         """

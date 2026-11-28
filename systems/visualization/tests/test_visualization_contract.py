@@ -288,12 +288,12 @@ class FakeNodeTypeResolver:
     def __init__(self, node_types: dict[str, object] | None = None) -> None:
         self.node_types = node_types or {
             "void": FakeNodeType(lambda _context: ""),
-            "text": FakeNodeType(lambda context: context.properties["title"]),
-            "file": FakeNodeType(lambda context: context.properties["title"]),
-            "link": FakeNodeType(lambda context: context.properties["title"]),
-            "agent": FakeNodeType(lambda context: context.properties["title"]),
+            "text": FakeNodeType(lambda context: context.nodes.get_all(context.node_id)["title"]),
+            "file": FakeNodeType(lambda context: context.nodes.get_all(context.node_id)["title"]),
+            "link": FakeNodeType(lambda context: context.nodes.get_all(context.node_id)["title"]),
+            "agent": FakeNodeType(lambda context: context.nodes.get_all(context.node_id)["title"]),
             "copy": FakeNodeType(
-                lambda context: context.properties["title"],
+                lambda context: context.nodes.get_all(context.node_id)["title"],
                 "dashed",
             ),
         }
@@ -613,7 +613,7 @@ def open_styled_viewer(
         {
             node_type_name: node_type,
             "text": FakeNodeType(
-                lambda context: context.properties["title"],
+                lambda context: context.nodes.get_all(context.node_id)["title"],
                 "solid",
             ),
         }
@@ -857,7 +857,7 @@ def test_measure_node_sizes_does_not_call_node_type_resolver() -> None:
     node_assignments = FakeNodeAssignments(
         {1: NodeAssignment(type="custom", param="parameter", title="shown")}
     )
-    node_type = FakeNodeType(lambda context: context.properties["param"].upper())
+    node_type = FakeNodeType(lambda context: context.nodes.get_all(context.node_id)["param"].upper())
     node_type_resolver = FakeNodeTypeResolver({"custom": node_type})
 
     sizes = measure_node_sizes([1], node_assignments, node_type_resolver, 12, 3)
@@ -1174,7 +1174,8 @@ def test_normal_node_uses_solid_border_from_node_type_render() -> None:
     assert node_type.render_calls[0].node_id == 1
     assert node_type.render_calls[0].workspace_path == TEST_WORKSPACE
     assert node_type.render_calls[0].workspace_path.is_absolute()
-    assert node_type.render_calls[0].properties["type"] == "normal"
+    context = node_type.render_calls[0]
+    assert context.nodes.get_all(context.node_id)["type"] == "normal"
 
 
 @pytest.mark.parametrize("show_node_ids", [False, True])
@@ -1679,7 +1680,7 @@ def test_assignment_title_is_wrapped_for_every_type(
     assert resolver.calls == [node_type_name, node_type_name]
     assert len(node_type.render_calls) == 2
     assert all(
-        context.properties["type"] == node_type_name
+        context.nodes.get_all(context.node_id)["type"] == node_type_name
         for context in node_type.render_calls
     )
     assert node_type.execute_calls == []
@@ -1875,11 +1876,11 @@ def test_assignment_type_change_updates_border_without_changing_geometry() -> No
         {1: NodeAssignment("normal", "", "Live title")}
     )
     normal_type = FakeNodeType(
-        lambda context: context.properties["title"],
+        lambda context: context.nodes.get_all(context.node_id)["title"],
         "solid",
     )
     copy_type = FakeNodeType(
-        lambda context: context.properties["title"],
+        lambda context: context.nodes.get_all(context.node_id)["title"],
         "dashed",
     )
     resolver = FakeNodeTypeResolver(
