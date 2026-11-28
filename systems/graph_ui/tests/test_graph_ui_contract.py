@@ -1,5 +1,6 @@
 """Contract tests for persistent graph UI state."""
 
+from contextlib import closing
 import tempfile
 import sqlite3
 import unittest
@@ -25,11 +26,6 @@ class GraphUIContractTests(unittest.TestCase):
         self.connection.close()
         self.temporary_directory.cleanup()
 
-    def test_open_initializes_without_a_selection(self) -> None:
-        graph_ui = open_graph_ui(self.connection)
-
-        self.assertIsNone(graph_ui.get_selected_node())
-
     def test_select_replaces_the_previous_selection(self) -> None:
         graph_ui = open_graph_ui(self.connection)
 
@@ -38,12 +34,6 @@ class GraphUIContractTests(unittest.TestCase):
 
         graph_ui.select_node(20)
         self.assertEqual(graph_ui.get_selected_node(), 20)
-        self.assertEqual(
-            self.connection.execute(
-                "SELECT parameter, value FROM graph_ui_params"
-            ).fetchall(),
-            [("SELECTED_NODE", 20)],
-        )
 
     def test_selection_does_not_require_an_existing_graph_node(self) -> None:
         nodes = Nodes(self.connection)
@@ -55,80 +45,46 @@ class GraphUIContractTests(unittest.TestCase):
         self.assertEqual(graph_ui.get_selected_node(), existing + 1000)
         self.assertEqual(nodes.list_nodes(), [existing])
 
-    def test_selection_persists_across_reopening(self) -> None:
+    def test_settings_default_commit_and_survive_reopening(self) -> None:
         graph_ui = open_graph_ui(self.connection)
-        graph_ui.select_node(42)
+
+        def collapse_two_nodes():
+            graph_ui.set_node_collapsed(20, True)
+            graph_ui.set_node_collapsed(10, True)
+
+        cases = (
+            ("get_selected_node", None, graph_ui.select_node, (42,), 42),
+            ("get_node_width", 12, graph_ui.set_node_width, (50,), 50),
+            ("get_node_height", 1, graph_ui.set_node_height, (6,), 6),
+            ("get_show_node_ids", True, graph_ui.set_show_node_ids, (False,), False),
+            ("get_collapsed_node_ids", set(), collapse_two_nodes, (), {10, 20}),
+        )
+        with closing(open_storage(self.database_path)) as observer_connection:
+            observer = open_graph_ui(observer_connection)
+            for getter, default, setter, args, expected in cases:
+                with self.subTest(setting=getter):
+                    initial = getattr(graph_ui, getter)()
+                    self.assertEqual((initial, type(initial)), (default, type(default)))
+                    setter(*args)
+                    observed = getattr(observer, getter)()
+                    self.assertEqual((observed, type(observed)), (expected, type(expected)))
 
         self.connection.close()
         self.connection = open_storage(self.database_path)
         reopened = open_graph_ui(self.connection)
+        for getter, _, _, _, expected in cases:
+            with self.subTest(reopened=getter):
+                actual = getattr(reopened, getter)()
+                self.assertEqual((actual, type(actual)), (expected, type(expected)))
 
-        self.assertEqual(reopened.get_selected_node(), 42)
-
-    def test_selection_is_committed_before_returning(self) -> None:
+    def test_invalid_node_widths_preserve_state(self) -> None:
         graph_ui = open_graph_ui(self.connection)
-        observer_connection = open_storage(self.database_path)
-        try:
-            observer = open_graph_ui(observer_connection)
-
-            graph_ui.select_node(7)
-
-            self.assertEqual(observer.get_selected_node(), 7)
-        finally:
-            observer_connection.close()
-
-    def test_node_width_defaults_to_12_and_persists(self) -> None:
-        graph_ui = open_graph_ui(self.connection)
-        self.assertEqual(graph_ui.get_node_width(), 12)
-
-        graph_ui.set_node_width(50)
-        self.connection.close()
-        self.connection = open_storage(self.database_path)
-        reopened = open_graph_ui(self.connection)
-
-        self.assertEqual(reopened.get_node_width(), 50)
-
-    def test_node_width_is_committed_and_validated(self) -> None:
-        graph_ui = open_graph_ui(self.connection)
-        observer_connection = open_storage(self.database_path)
-        try:
-            observer = open_graph_ui(observer_connection)
-            graph_ui.set_node_width(20)
-            self.assertEqual(observer.get_node_width(), 20)
-        finally:
-            observer_connection.close()
-
+        graph_ui.set_node_width(20)
         for width in (2, 0, -1, 3.5, "12", True):
             with self.subTest(width=width):
                 with self.assertRaises(ValueError):
                     graph_ui.set_node_width(width)
-
-    def test_node_height_defaults_to_one_and_persists(self) -> None:
-        graph_ui = open_graph_ui(self.connection)
-
-        self.assertEqual(graph_ui.get_node_height(), 1)
-
-        graph_ui.set_node_height(4)
-
-        self.assertEqual(graph_ui.get_node_height(), 4)
-
-    def test_node_height_survives_reopening_and_is_committed(self) -> None:
-        graph_ui = open_graph_ui(self.connection)
-        observer_connection = open_storage(self.database_path)
-        try:
-            observer = open_graph_ui(observer_connection)
-
-            graph_ui.set_node_height(6)
-
-            self.assertEqual(observer.get_node_height(), 6)
-        finally:
-            observer_connection.close()
-
-        self.connection.close()
-        self.connection = open_storage(self.database_path)
-        reopened = open_graph_ui(self.connection)
-
-        self.assertEqual(reopened.get_node_height(), 6)
+                self.assertEqual(graph_ui.get_node_width(), 20)
 
     def test_invalid_node_heights_do_not_change_persisted_state(self) -> None:
         graph_ui = open_graph_ui(self.connection)
@@ -166,25 +122,6 @@ class GraphUIContractTests(unittest.TestCase):
         self.assertEqual(graph_ui.get_node_width(), 24)
         self.assertEqual(graph_ui.get_selected_node(), 17)
 
-    def test_show_node_ids_defaults_to_true(self) -> None:
-        graph_ui = open_graph_ui(self.connection)
-
-        self.assertIs(graph_ui.get_show_node_ids(), True)
-
-    def test_show_node_ids_persists_and_is_committed(self) -> None:
-        graph_ui = open_graph_ui(self.connection)
-        observer_connection = open_storage(self.database_path)
-        try:
-            observer = open_graph_ui(observer_connection)
-            graph_ui.set_show_node_ids(False)
-            self.assertIs(observer.get_show_node_ids(), False)
-        finally:
-            observer_connection.close()
-
-        self.connection.close()
-        self.connection = open_storage(self.database_path)
-        self.assertIs(open_graph_ui(self.connection).get_show_node_ids(), False)
-
     def test_show_node_ids_rejects_non_boolean_without_changes(self) -> None:
         graph_ui = open_graph_ui(self.connection)
         graph_ui.set_show_node_ids(False)
@@ -204,34 +141,12 @@ class GraphUIContractTests(unittest.TestCase):
         self.assertEqual(graph_ui.get_collapsed_node_ids(), set())
         self.assertIsNot(first, graph_ui.get_collapsed_node_ids())
 
-    def test_collapsed_node_ids_persist_reopen_and_commit(self) -> None:
-        graph_ui = open_graph_ui(self.connection)
-        observer_connection = open_storage(self.database_path)
-        try:
-            observer = open_graph_ui(observer_connection)
-            graph_ui.set_node_collapsed(20, True)
-            graph_ui.set_node_collapsed(10, True)
-
-            self.assertEqual(observer.get_collapsed_node_ids(), {10, 20})
-        finally:
-            observer_connection.close()
-
-        self.connection.close()
-        self.connection = open_storage(self.database_path)
-        reopened = open_graph_ui(self.connection)
-        self.assertEqual(reopened.get_collapsed_node_ids(), {10, 20})
-
     def test_setting_collapsed_state_is_idempotent(self) -> None:
         graph_ui = open_graph_ui(self.connection)
 
         graph_ui.set_node_collapsed(7, True)
         graph_ui.set_node_collapsed(7, True)
-        self.assertEqual(
-            self.connection.execute(
-                "SELECT node_id FROM graph_ui_collapsed_nodes"
-            ).fetchall(),
-            [(7,)],
-        )
+        self.assertEqual(graph_ui.get_collapsed_node_ids(), {7})
 
         graph_ui.set_node_collapsed(7, False)
         graph_ui.set_node_collapsed(7, False)

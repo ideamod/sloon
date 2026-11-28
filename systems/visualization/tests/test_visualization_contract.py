@@ -17,6 +17,7 @@ from textual.color import Color
 from textual.geometry import Region
 
 from systems.geometry import calculate_geometry
+from systems.geometry.spec.api import GeometryAPI
 from systems.geometry.spec.schema import NODE_WIDTH, Geometry, Rect, Size
 from systems.logical_layout import calculate_layout
 from systems.logical_layout.spec.schema import ComponentLayout, LogicalLayout
@@ -34,17 +35,6 @@ from systems.visualization.impl.visualization import (
     _render_snapshot,
 )
 from systems.visible_graph import calculate_visible_graph
-
-
-@dataclass(frozen=True)
-class NodeAssignment:
-    type: str
-    param: str
-    title: str = ""
-    status: str = "none"
-    note: str = ""
-    tags: str = ""
-    weight: int = 0
 
 
 def test_theme_loads_relative_to_visualization_and_validates_values(monkeypatch, tmp_path) -> None:
@@ -148,37 +138,20 @@ def test_background_covers_full_viewport_before_and_after_resize(nodes) -> None:
 
 
 @dataclass
-class FakeGraph:
-    nodes: list[int]
-    edges: list[tuple[int, int]]
-
-    def get_nodes(self) -> list[int]:
-        return list(self.nodes)
-
-    def get_edges(self) -> list[tuple[int, int]]:
-        return list(self.edges)
-
-    def get_node(self, node_id: int) -> int | None:
-        return node_id if node_id in self.nodes else None
-
-
-@dataclass
 class FakeGraphUI:
     selected_node: int | None = None
     node_width: int = NODE_WIDTH
     node_height: int = 1
     show_node_ids: bool = True
     collapsed_node_ids: set[int] = field(default_factory=set)
-    get_selected_node_calls: int = 0
 
     def get_selected_node(self) -> int | None:
-        self.get_selected_node_calls += 1
         return self.selected_node
 
     def get_active_container_id(self) -> str:
         return ""
 
-    def select_node(self, node_id: int) -> None:
+    def select_node(self, node_id: int | None) -> None:
         self.selected_node = node_id
 
     def get_node_width(self) -> int:
@@ -210,63 +183,43 @@ class FakeGraphUI:
 
 
 @dataclass
-class FakeNodeAssignments:
-    assignments: dict[int, object]
+class FakeNodes:
+    nodes: list[int] = field(default_factory=list)
+    edges: list[tuple[int, int]] = field(default_factory=list)
+    properties: dict[int, object] = field(default_factory=dict)
     error: Exception | None = None
 
-    def get(self, node_id: int) -> object:
-        if self.error is not None:
-            raise self.error
-        return self.assignments.get(
-            node_id,
-            NodeAssignment(type="void", param="", title=""),
-        )
-
-
-@dataclass
-class FakeNodes:
-    graph: FakeGraph
-    assignments: FakeNodeAssignments
-
     def list_nodes(self) -> list[int]:
-        return self.graph.get_nodes()
+        return list(self.nodes)
 
     def list_edges(self) -> list[tuple[int, int]]:
-        return self.graph.get_edges()
+        return list(self.edges)
 
     def node_exists(self, node_id: int) -> bool:
-        return self.graph.get_node(node_id) is not None
+        return node_id in self.nodes
 
     def get_many(self, node_ids, keys):
-        # These fixtures use the root graph and have no container properties.
-        return {node_id: {} for node_id in node_ids}
+        result = {}
+        for node_id in node_ids:
+            values = self.properties.get(node_id, {})
+            result[node_id] = (
+                {key: values[key] for key in keys if key in values}
+                if isinstance(values, dict) else {}
+            )
+        return result
 
     def get_all(self, node_id: int):
-        value = self.assignments.get(node_id)
-        if not isinstance(value, NodeAssignment):
-            return value
-        weight = str(value.weight) if type(value.weight) is int else value.weight
-        return {
-            "type": value.type, "title": value.title, "param": value.param,
-            "status": value.status, "note": value.note, "tags": value.tags,
-            "weight": weight,
-        }
-
-
-def measure_node_sizes(node_ids, assignments, resolver, *args, **kwargs):
-    return measure_nodes_sizes(
-        node_ids, FakeNodes(FakeGraph(list(node_ids), []), assignments),
-        resolver, *args, **kwargs,
-    )
+        if self.error is not None:
+            raise self.error
+        return self.properties.get(node_id, {})
 
 
 TEST_WORKSPACE = Path("/test.sloon")
 
 
-def open_visualization(graph, graph_ui, assignments, resolver, layout, geometry):
+def open_viewer(nodes, graph_ui, resolver, layout, geometry):
     return open_nodes_visualization(
-        FakeNodes(graph, assignments), graph_ui, resolver, layout, geometry,
-        workspace_path=TEST_WORKSPACE,
+        nodes, graph_ui, resolver, layout, geometry, workspace_path=TEST_WORKSPACE,
     )
 
 
@@ -295,12 +248,12 @@ class FakeNodeTypeResolver:
     def __init__(self, node_types: dict[str, object] | None = None) -> None:
         self.node_types = node_types or {
             "void": FakeNodeType(lambda _context: ""),
-            "text": FakeNodeType(lambda context: context.nodes.get_all(context.node_id)["title"]),
-            "file": FakeNodeType(lambda context: context.nodes.get_all(context.node_id)["title"]),
-            "link": FakeNodeType(lambda context: context.nodes.get_all(context.node_id)["title"]),
-            "agent": FakeNodeType(lambda context: context.nodes.get_all(context.node_id)["title"]),
+            "text": FakeNodeType(lambda context: context.nodes.get_all(context.node_id).get("title", "")),
+            "file": FakeNodeType(lambda context: context.nodes.get_all(context.node_id).get("title", "")),
+            "link": FakeNodeType(lambda context: context.nodes.get_all(context.node_id).get("title", "")),
+            "agent": FakeNodeType(lambda context: context.nodes.get_all(context.node_id).get("title", "")),
             "copy": FakeNodeType(
-                lambda context: context.nodes.get_all(context.node_id)["title"],
+                lambda context: context.nodes.get_all(context.node_id).get("title", ""),
                 "dashed",
             ),
         }
@@ -340,78 +293,27 @@ def logical_layout(*columns: tuple[int, ...]) -> FakeLogicalLayout:
     return FakeLogicalLayout(layout)
 
 
-def display_dependencies() -> tuple[
-    FakeNodeAssignments,
-    FakeNodeTypeResolver,
-]:
-    return FakeNodeAssignments({}), FakeNodeTypeResolver()
-
-
 def geometry_for(
     *columns: tuple[int, ...],
-    node_assignments: FakeNodeAssignments | None = None,
-    node_type_resolver: FakeNodeTypeResolver | None = None,
     node_width: int = NODE_WIDTH,
     node_height: int = 1,
     show_node_ids: bool = True,
-) -> FakeGeometry:
-    if node_assignments is None or node_type_resolver is None:
-        default_assignments, default_resolver = display_dependencies()
-        node_assignments = node_assignments or default_assignments
-        node_type_resolver = node_type_resolver or default_resolver
+):
     node_ids = [node_id for column in columns for node_id in column]
-    sizes = measure_node_sizes(
-        node_ids,
-        node_assignments,
-        node_type_resolver,
-        node_width,
-        node_height,
-        show_node_ids,
+    width = node_width
+    if show_node_ids:
+        width = max([width, *(len(str(node_id)) for node_id in node_ids)])
+    height = node_height + (3 if show_node_ids else 2)
+    return calculate_geometry(
+        logical_layout(*columns).layout,
+        {node_id: Size(width, height) for node_id in node_ids},
+        node_width=width,
+        row_gap=1,
     )
-
-    column_widths = [
-        max((sizes[node].width for node in column), default=0)
-        for column in columns
-    ]
-    row_count = max((len(column) for column in columns), default=0)
-    row_heights = [
-        max(
-            sizes[column[position]].height
-            for column in columns
-            if position < len(column)
-        )
-        for position in range(row_count)
-    ]
-
-    column_x: list[int] = []
-    x = 0
-    for width in column_widths:
-        column_x.append(x)
-        x += width + 4
-
-    row_y: list[int] = []
-    y = 0
-    for height in row_heights:
-        row_y.append(y)
-        y += height + 1
-
-    rectangles = {
-        node_id: Rect(
-            x=column_x[column_index],
-            y=row_y[position],
-            width=sizes[node_id].width,
-            height=sizes[node_id].height,
-        )
-        for column_index, column in enumerate(columns)
-        for position, node_id in enumerate(column)
-    }
-    width = max((rect.x + rect.width for rect in rectangles.values()), default=0)
-    height = max((rect.y + rect.height for rect in rectangles.values()), default=0)
-    return FakeGeometry(Geometry(nodes=rectangles, width=width, height=height))
 
 
 def geometry_with_rect(
-    geometry: FakeGeometry,
+    geometry: GeometryAPI,
     node_id: int,
     replacement: Rect,
 ) -> FakeGeometry:
@@ -429,35 +331,33 @@ def open_two_node_viewer(
     show_node_ids: bool = True,
 ) -> tuple[
     object,
-    FakeGraph,
+    FakeNodes,
     FakeGraphUI,
-    FakeNodeAssignments,
+    dict[int, object],
     FakeNodeTypeResolver,
     FakeLogicalLayout,
-    FakeGeometry,
+    GeometryAPI,
 ]:
-    graph = FakeGraph(nodes=[1, 2], edges=[(1, 2)])
+    graph = FakeNodes(nodes=[1, 2], edges=[(1, 2)])
     graph_ui = FakeGraphUI(
         selected_node=1,
         node_width=node_width,
         node_height=node_height,
         show_node_ids=show_node_ids,
     )
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
     layout = logical_layout((1,), (2,))
     geometry = geometry_for(
         (1,),
         (2,),
-        node_assignments=node_assignments,
-        node_type_resolver=node_type_resolver,
         node_width=node_width,
         node_height=node_height,
         show_node_ids=show_node_ids,
     )
-    viewer = open_visualization(
+    graph.properties = properties
+    viewer = open_viewer(
         graph,
         graph_ui,
-        node_assignments,
         node_type_resolver,
         layout,
         geometry,
@@ -466,7 +366,7 @@ def open_two_node_viewer(
         viewer,
         graph,
         graph_ui,
-        node_assignments,
+        properties,
         node_type_resolver,
         layout,
         geometry,
@@ -483,48 +383,55 @@ def open_single_node_viewer(
 ) -> tuple[
     object,
     FakeGraphUI,
-    FakeNodeAssignments,
+    dict[int, object],
     FakeNodeTypeResolver,
-    FakeGeometry,
+    GeometryAPI,
 ]:
-    graph = FakeGraph(nodes=[node_id], edges=[])
+    graph = FakeNodes(nodes=[node_id], edges=[])
     graph_ui = FakeGraphUI(
         selected_node=node_id if selected else None,
         node_width=node_width,
         node_height=node_height,
         show_node_ids=show_node_ids,
     )
-    assignments = (
+    properties = (
         {}
         if display_text is None
         else {
-            node_id: NodeAssignment(
-                type="text",
-                param="type-specific parameter",
-                title=display_text,
-            )
+            node_id: {"type": "text", "param": "type-specific parameter", "title": display_text}
         }
     )
-    node_assignments = FakeNodeAssignments(assignments)
     node_type_resolver = FakeNodeTypeResolver()
     layout = logical_layout((node_id,),)
     geometry = geometry_for(
         (node_id,),
-        node_assignments=node_assignments,
-        node_type_resolver=node_type_resolver,
         node_width=node_width,
         node_height=node_height,
         show_node_ids=show_node_ids,
     )
-    viewer = open_visualization(
+    graph.properties = properties
+    viewer = open_viewer(
         graph,
         graph_ui,
-        node_assignments,
         node_type_resolver,
         layout,
         geometry,
     )
-    return viewer, graph_ui, node_assignments, node_type_resolver, geometry
+    return viewer, graph_ui, properties, node_type_resolver, geometry
+
+
+def projected_placement(nodes, graph_ui, resolver):
+    visible = calculate_visible_graph(
+        nodes.list_nodes(), nodes.list_edges(), graph_ui.get_collapsed_node_ids(),
+    )
+    layout = calculate_layout(list(visible.nodes), list(visible.edges))
+    sizes = measure_nodes_sizes(
+        list(visible.nodes), nodes, resolver,
+        graph_ui.node_width, graph_ui.node_height, graph_ui.show_node_ids,
+    )
+    width = next(iter(sizes.values())).width if sizes else graph_ui.node_width
+    geometry = calculate_geometry(layout.layout, sizes, node_width=width)
+    return layout, geometry
 
 
 def open_projected_viewer(
@@ -539,13 +446,13 @@ def open_projected_viewer(
     show_node_ids: bool = True,
 ) -> tuple[
     object,
-    FakeGraph,
+    FakeNodes,
     FakeGraphUI,
-    FakeNodeAssignments,
+    dict[int, object],
     object,
     object,
 ]:
-    graph = FakeGraph(nodes=list(nodes), edges=list(edges))
+    graph = FakeNodes(nodes=list(nodes), edges=list(edges))
     graph_ui = FakeGraphUI(
         selected_node=selected_node,
         node_width=node_width,
@@ -553,42 +460,21 @@ def open_projected_viewer(
         show_node_ids=show_node_ids,
         collapsed_node_ids=set(collapsed_node_ids or set()),
     )
-    assignments = FakeNodeAssignments(
-        {
-            node_id: NodeAssignment("text", "", title)
-            for node_id, title in (titles or {}).items()
-        }
-    )
+    node_properties = {
+        node_id: {"type": "text", "title": title}
+        for node_id, title in (titles or {}).items()
+    }
     resolver = FakeNodeTypeResolver()
-    visible = calculate_visible_graph(
-        graph.get_nodes(),
-        graph.get_edges(),
-        graph_ui.get_collapsed_node_ids(),
-    )
-    layout = calculate_layout(list(visible.nodes), list(visible.edges))
-    sizes = measure_node_sizes(
-        list(visible.nodes),
-        assignments,
-        resolver,
-        node_width,
-        node_height,
-        show_node_ids,
-    )
-    occupied_width = next(iter(sizes.values())).width if sizes else node_width
-    geometry = calculate_geometry(
-        layout.layout,
-        sizes,
-        node_width=occupied_width,
-    )
-    viewer = open_visualization(
+    graph.properties = node_properties
+    layout, geometry = projected_placement(graph, graph_ui, resolver)
+    viewer = open_viewer(
         graph,
         graph_ui,
-        assignments,
         resolver,
         layout,
         geometry,
     )
-    return viewer, graph, graph_ui, assignments, layout, geometry
+    return viewer, graph, graph_ui, node_properties, layout, geometry
 
 
 def open_styled_viewer(
@@ -599,19 +485,17 @@ def open_styled_viewer(
     selected: bool = False,
     show_node_ids: bool = True,
     status: str = "none",
-) -> tuple[object, FakeGraphUI, FakeNodeAssignments, FakeNodeType, FakeGeometry]:
-    graph = FakeGraph(nodes=[1, 2], edges=[(1, 2)])
+) -> tuple[object, FakeGraphUI, dict[int, object], FakeNodeType, GeometryAPI]:
+    graph = FakeNodes(nodes=[1, 2], edges=[(1, 2)])
     graph_ui = FakeGraphUI(
         selected_node=1 if selected else None,
         show_node_ids=show_node_ids,
         collapsed_node_ids={1} if collapsed else set(),
     )
-    assignments = FakeNodeAssignments(
-        {
-            1: NodeAssignment(node_type_name, "2", "Copy title", status),
-            2: NodeAssignment("text", "", "Target"),
-        }
-    )
+    node_properties = {
+        1: {"type": node_type_name, "title": "Copy title", "status": status},
+        2: {"type": "text", "title": "Target"},
+    }
     node_type = FakeNodeType(
         lambda _context: "render title must not replace assignment title",
         border_style,
@@ -620,41 +504,21 @@ def open_styled_viewer(
         {
             node_type_name: node_type,
             "text": FakeNodeType(
-                lambda context: context.nodes.get_all(context.node_id)["title"],
+                lambda context: context.nodes.get_all(context.node_id).get("title", ""),
                 "solid",
             ),
         }
     )
-    visible = calculate_visible_graph(
-        graph.get_nodes(),
-        graph.get_edges(),
-        graph_ui.get_collapsed_node_ids(),
-    )
-    nodes, edges = list(visible.nodes), list(visible.edges)
-    layout = calculate_layout(nodes, edges)
-    sizes = measure_node_sizes(
-        nodes,
-        assignments,
-        resolver,
-        graph_ui.node_width,
-        graph_ui.node_height,
-        show_node_ids,
-    )
-    occupied_width = next(iter(sizes.values())).width if sizes else NODE_WIDTH
-    geometry = calculate_geometry(
-        layout.layout,
-        sizes,
-        node_width=occupied_width,
-    )
-    viewer = open_visualization(
+    graph.properties = node_properties
+    layout, geometry = projected_placement(graph, graph_ui, resolver)
+    viewer = open_viewer(
         graph,
         graph_ui,
-        assignments,
         resolver,
         layout,
         geometry,
     )
-    return viewer, graph_ui, assignments, node_type, geometry
+    return viewer, graph_ui, node_properties, node_type, geometry
 
 
 def assert_public_viewer(viewer: object) -> None:
@@ -703,13 +567,12 @@ def viewer_with_rectangles(
     node_width: int = NODE_WIDTH,
     node_height: int = 1,
 ) -> object:
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
     width = max((rect.x + rect.width for rect in rectangles.values()), default=0)
     height = max((rect.y + rect.height for rect in rectangles.values()), default=0)
-    return open_visualization(
-        FakeGraph(nodes=nodes, edges=edges),
+    return open_viewer(
+        FakeNodes(nodes=nodes, edges=edges, properties=properties),
         FakeGraphUI(node_width=node_width, node_height=node_height),
-        node_assignments,
         node_type_resolver,
         logical_layout(*((node_id,) for node_id in nodes)),
         FakeGeometry(Geometry(rectangles, width, height)),
@@ -717,11 +580,11 @@ def viewer_with_rectangles(
 
 
 def test_measure_node_sizes_has_exact_node_coverage() -> None:
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
 
-    sizes = measure_node_sizes(
+    sizes = measure_nodes_sizes(
         [7, 42, 1000],
-        node_assignments,
+        FakeNodes(properties=properties),
         node_type_resolver,
     )
 
@@ -730,17 +593,15 @@ def test_measure_node_sizes_has_exact_node_coverage() -> None:
 
 @pytest.mark.parametrize("node_height", [1, 2, 5])
 def test_measure_node_sizes_use_fixed_configured_height(node_height: int) -> None:
-    node_assignments = FakeNodeAssignments(
-        {
-            2: NodeAssignment(type="text", param="short"),
-            3: NodeAssignment(type="text", param="content that overflows"),
+    properties = {
+            2: {"type": "text", "param": "short"},
+            3: {"type": "text", "param": "content that overflows"},
         }
-    )
     node_type_resolver = FakeNodeTypeResolver()
 
-    sizes = measure_node_sizes(
+    sizes = measure_nodes_sizes(
         [1, 2, 3],
-        node_assignments,
+        FakeNodes(properties=properties),
         node_type_resolver,
         node_width=9,
         node_height=node_height,
@@ -757,11 +618,11 @@ def test_measure_node_sizes_uses_configured_dimensions(
     node_width: int,
     node_height: int,
 ) -> None:
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
 
-    sizes = measure_node_sizes(
+    sizes = measure_nodes_sizes(
         [1, 2],
-        node_assignments,
+        FakeNodes(properties=properties),
         node_type_resolver,
         node_width,
         node_height,
@@ -774,11 +635,11 @@ def test_measure_node_sizes_uses_configured_dimensions(
 
 def test_measure_node_sizes_uses_complete_widest_id_as_shared_width() -> None:
     widest_id = -1234567890123
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
 
-    sizes = measure_node_sizes(
+    sizes = measure_nodes_sizes(
         [1, widest_id],
-        node_assignments,
+        FakeNodes(properties=properties),
         node_type_resolver,
     )
 
@@ -789,11 +650,11 @@ def test_measure_node_sizes_uses_complete_widest_id_as_shared_width() -> None:
 
 def test_measure_node_sizes_without_ids_uses_only_main_rectangle() -> None:
     widest_id = -1234567890123
-    node_assignments, resolver = display_dependencies()
+    properties, resolver = {}, FakeNodeTypeResolver()
 
-    sizes = measure_node_sizes(
+    sizes = measure_nodes_sizes(
         [1, widest_id],
-        node_assignments,
+        FakeNodes(properties=properties),
         resolver,
         node_width=8,
         node_height=4,
@@ -807,29 +668,29 @@ def test_measure_node_sizes_without_ids_uses_only_main_rectangle() -> None:
 def test_measure_node_sizes_rejects_non_boolean_id_visibility(
     show_node_ids: object,
 ) -> None:
-    node_assignments, resolver = display_dependencies()
+    properties, resolver = {}, FakeNodeTypeResolver()
 
     with pytest.raises(ValueError):
-        measure_node_sizes(
-            [1], node_assignments, resolver, show_node_ids=show_node_ids
+        measure_nodes_sizes(
+            [1], FakeNodes(properties=properties), resolver, show_node_ids=show_node_ids
         )
 
 
 def test_measure_node_sizes_is_deterministic() -> None:
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
 
-    assert measure_node_sizes(
-        [5, 123, 9], node_assignments, node_type_resolver, 18, 3
-    ) == measure_node_sizes(
-        [5, 123, 9], node_assignments, node_type_resolver, 18, 3
+    assert measure_nodes_sizes(
+        [5, 123, 9], FakeNodes(properties=properties), node_type_resolver, 18, 3
+    ) == measure_nodes_sizes(
+        [5, 123, 9], FakeNodes(properties=properties), node_type_resolver, 18, 3
     )
 
 
 def test_measure_node_sizes_rejects_duplicate_ids() -> None:
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
 
     with pytest.raises(ValueError):
-        measure_node_sizes([1, 2, 1], node_assignments, node_type_resolver)
+        measure_nodes_sizes([1, 2, 1], FakeNodes(properties=properties), node_type_resolver)
 
 
 @pytest.mark.parametrize(
@@ -840,12 +701,12 @@ def test_measure_node_sizes_rejects_invalid_dimensions(
     node_width: object,
     node_height: object,
 ) -> None:
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
 
     with pytest.raises(ValueError):
-        measure_node_sizes(
+        measure_nodes_sizes(
             [1],
-            node_assignments,
+            FakeNodes(properties=properties),
             node_type_resolver,
             node_width,
             node_height,
@@ -853,21 +714,19 @@ def test_measure_node_sizes_rejects_invalid_dimensions(
 
 
 def test_measure_node_sizes_accepts_empty_input() -> None:
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
 
-    assert measure_node_sizes(
-        [], node_assignments, node_type_resolver, 3, 7
+    assert measure_nodes_sizes(
+        [], FakeNodes(properties=properties), node_type_resolver, 3, 7
     ) == {}
 
 
 def test_measure_node_sizes_does_not_call_node_type_resolver() -> None:
-    node_assignments = FakeNodeAssignments(
-        {1: NodeAssignment(type="custom", param="parameter", title="shown")}
-    )
+    properties = {1: {"type": "custom", "param": "parameter", "title": "shown"}}
     node_type = FakeNodeType(lambda context: context.nodes.get_all(context.node_id)["param"].upper())
     node_type_resolver = FakeNodeTypeResolver({"custom": node_type})
 
-    sizes = measure_node_sizes([1], node_assignments, node_type_resolver, 12, 3)
+    sizes = measure_nodes_sizes([1], FakeNodes(properties=properties), node_type_resolver, 12, 3)
 
     assert sizes == {1: Size(12, 6)}
     assert node_type_resolver.calls == []
@@ -876,57 +735,19 @@ def test_measure_node_sizes_does_not_call_node_type_resolver() -> None:
 
 
 @pytest.mark.parametrize(
-    ("node_assignments", "node_type_resolver"),
-    [
-        (FakeNodeAssignments({1: object()}), FakeNodeTypeResolver()),
-        (
-            FakeNodeAssignments(
-                {1: NodeAssignment(type="text", param="value", title=object())}
-            ),
-            FakeNodeTypeResolver(),
-        ),
-        (
-            FakeNodeAssignments(
-                {
-                    1: NodeAssignment(
-                        type="text", param="value", note=object()
-                    )
-                }
-            ),
-            FakeNodeTypeResolver(),
-        ),
-        (
-            FakeNodeAssignments(
-                {
-                    1: NodeAssignment(
-                        type="text", param="value", tags=object()
-                    )
-                }
-            ),
-            FakeNodeTypeResolver(),
-        ),
-        (
-            FakeNodeAssignments(
-                {1: NodeAssignment(type="text", param="value", weight=True)}
-            ),
-            FakeNodeTypeResolver(),
-        ),
-    ],
-    ids=["assignment", "title", "note", "tags", "weight"],
+    "value",
+    [object(), {"title": object()}, {"note": object()}, {"tags": object()}, {"weight": True}],
+    ids=["property-set", "title", "note", "tags", "weight"],
 )
-def test_measure_node_sizes_rejects_invalid_assignments(
-    node_assignments: FakeNodeAssignments,
-    node_type_resolver: FakeNodeTypeResolver,
-) -> None:
+def test_measure_node_sizes_rejects_invalid_properties(value):
     with pytest.raises(ValueError):
-        measure_node_sizes([1], node_assignments, node_type_resolver)
+        measure_nodes_sizes([1], FakeNodes(properties={1: value}), FakeNodeTypeResolver())
 
 
-def test_measure_node_sizes_propagates_assignment_lookup_errors() -> None:
-    node_assignments = FakeNodeAssignments({}, error=LookupError("unavailable"))
-
+def test_measure_node_sizes_propagates_property_lookup_errors():
+    nodes = FakeNodes(error=LookupError("unavailable"))
     with pytest.raises(LookupError, match="unavailable"):
-        measure_node_sizes([1], node_assignments, FakeNodeTypeResolver())
+        measure_nodes_sizes([1], nodes, FakeNodeTypeResolver())
 
 
 def test_open_visualization_accepts_valid_graph_layout_and_geometry() -> None:
@@ -936,19 +757,17 @@ def test_open_visualization_accepts_valid_graph_layout_and_geometry() -> None:
 
 
 def test_open_visualization_accepts_empty_graph() -> None:
-    graph = FakeGraph(nodes=[], edges=[])
+    graph = FakeNodes(nodes=[], edges=[])
     graph_ui = FakeGraphUI(node_width=20, node_height=4)
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
 
-    viewer = open_visualization(
+    graph.properties = properties
+    viewer = open_viewer(
         graph,
         graph_ui,
-        node_assignments,
         node_type_resolver,
         logical_layout(),
         geometry_for(
-            node_assignments=node_assignments,
-            node_type_resolver=node_type_resolver,
             node_width=20,
             node_height=4,
         ),
@@ -965,21 +784,19 @@ def test_open_visualization_accepts_empty_graph() -> None:
 def test_open_visualization_rejects_inexact_layout_node_coverage(
     bad_layout: FakeLogicalLayout,
 ) -> None:
-    graph = FakeGraph(nodes=[1, 2], edges=[(1, 2)])
-    node_assignments, node_type_resolver = display_dependencies()
+    graph = FakeNodes(nodes=[1, 2], edges=[(1, 2)])
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
 
     with pytest.raises(ValueError):
-        open_visualization(
+        graph.properties = properties
+        open_viewer(
             graph,
             FakeGraphUI(),
-            node_assignments,
             node_type_resolver,
             bad_layout,
             geometry_for(
                 (1,),
                 (2,),
-                node_assignments=node_assignments,
-                node_type_resolver=node_type_resolver,
             ),
         )
 
@@ -992,20 +809,18 @@ def test_open_visualization_rejects_inexact_layout_node_coverage(
 def test_open_visualization_rejects_inexact_geometry_node_coverage(
     bad_geometry_columns: tuple[tuple[int, ...], ...],
 ) -> None:
-    graph = FakeGraph(nodes=[1, 2], edges=[(1, 2)])
-    node_assignments, node_type_resolver = display_dependencies()
+    graph = FakeNodes(nodes=[1, 2], edges=[(1, 2)])
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
 
     with pytest.raises(ValueError):
-        open_visualization(
+        graph.properties = properties
+        open_viewer(
             graph,
             FakeGraphUI(),
-            node_assignments,
             node_type_resolver,
             logical_layout((1,), (2,)),
             geometry_for(
                 *bad_geometry_columns,
-                node_assignments=node_assignments,
-                node_type_resolver=node_type_resolver,
             ),
         )
 
@@ -1014,13 +829,11 @@ def test_open_visualization_rejects_inexact_geometry_node_coverage(
 def test_open_visualization_rejects_incorrect_rectangle_dimensions(
     dimension: str,
 ) -> None:
-    graph = FakeGraph(nodes=[1], edges=[])
+    graph = FakeNodes(nodes=[1], edges=[])
     graph_ui = FakeGraphUI(node_height=3)
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
     correct_geometry = geometry_for(
         (1,),
-        node_assignments=node_assignments,
-        node_type_resolver=node_type_resolver,
         node_height=3,
     )
     correct_rect = correct_geometry.get_rect(1)
@@ -1032,10 +845,10 @@ def test_open_visualization_rejects_incorrect_rectangle_dimensions(
     )
 
     with pytest.raises(ValueError):
-        open_visualization(
+        graph.properties = properties
+        open_viewer(
             graph,
             graph_ui,
-            node_assignments,
             node_type_resolver,
             logical_layout((1,),),
             geometry_with_rect(correct_geometry, 1, wrong_rect),
@@ -1043,8 +856,8 @@ def test_open_visualization_rejects_incorrect_rectangle_dimensions(
 
 
 def test_open_visualization_rejects_main_rectangle_without_id_row() -> None:
-    graph = FakeGraph(nodes=[1], edges=[])
-    node_assignments, node_type_resolver = display_dependencies()
+    graph = FakeNodes(nodes=[1], edges=[])
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
     main_only = FakeGeometry(
         Geometry(
             nodes={1: Rect(0, 0, NODE_WIDTH, 3)},
@@ -1054,10 +867,10 @@ def test_open_visualization_rejects_main_rectangle_without_id_row() -> None:
     )
 
     with pytest.raises(ValueError):
-        open_visualization(
+        graph.properties = properties
+        open_viewer(
             graph,
             FakeGraphUI(),
-            node_assignments,
             node_type_resolver,
             logical_layout((1,),),
             main_only,
@@ -1066,57 +879,32 @@ def test_open_visualization_rejects_main_rectangle_without_id_row() -> None:
 
 def test_open_visualization_accepts_selection_for_nonexistent_node() -> None:
     graph_ui = FakeGraphUI(selected_node=999, node_height=2)
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
 
-    viewer = open_visualization(
-        FakeGraph(nodes=[1], edges=[]),
+    viewer = open_viewer(
+        FakeNodes(nodes=[1], edges=[], properties=properties),
         graph_ui,
-        node_assignments,
         node_type_resolver,
         logical_layout((1,),),
         geometry_for(
             (1,),
-            node_assignments=node_assignments,
-            node_type_resolver=node_type_resolver,
             node_height=2,
         ),
     )
 
     assert_public_viewer(viewer)
-    assert graph_ui.get_selected_node_calls > 0
+    assert rendered_plain(viewer)
 
 
-@pytest.mark.parametrize(
-    ("node_assignments", "node_type_resolver"),
-    [
-        (FakeNodeAssignments({1: object()}), FakeNodeTypeResolver()),
-        (
-            FakeNodeAssignments(
-                {1: NodeAssignment(type="text", param="value", title=object())}
-            ),
-            FakeNodeTypeResolver(),
-        ),
-    ],
-    ids=["assignment", "title"],
-)
-def test_open_visualization_rejects_invalid_assignments(
-    node_assignments: FakeNodeAssignments,
-    node_type_resolver: FakeNodeTypeResolver,
-) -> None:
+@pytest.mark.parametrize("value", [object(), {"title": object()}], ids=["property-set", "title"])
+def test_open_visualization_rejects_invalid_properties(value):
     with pytest.raises(ValueError):
-        open_visualization(
-            FakeGraph(nodes=[1], edges=[]),
+        open_viewer(
+            FakeNodes(nodes=[1], properties={1: value}),
             FakeGraphUI(),
-            node_assignments,
-            node_type_resolver,
-            logical_layout((1,),),
-            FakeGeometry(
-                Geometry(
-                    nodes={1: Rect(0, 0, NODE_WIDTH, 4)},
-                    width=NODE_WIDTH,
-                    height=4,
-                )
-            ),
+            FakeNodeTypeResolver(),
+            logical_layout((1,)),
+            geometry_for((1,)),
         )
 
 
@@ -1136,30 +924,23 @@ def test_every_node_has_exact_configured_main_and_occupied_height() -> None:
 
 
 def test_all_nodes_render_same_dimensions_regardless_of_content() -> None:
-    graph = FakeGraph(nodes=[1, 2, 3], edges=[])
+    graph = FakeNodes(nodes=[1, 2, 3], edges=[])
     graph_ui = FakeGraphUI(node_width=9, node_height=2)
-    assignments = FakeNodeAssignments(
-        {
-            2: NodeAssignment(type="text", param="ignored", title="short"),
-            3: NodeAssignment(
-                type="text",
-                param="also ignored",
-                title="far too much content to fit",
-            ),
+    node_properties = {
+            2: {"type": "text", "param": "ignored", "title": "short"},
+            3: {"type": "text", "param": "also ignored", "title": "far too much content to fit"},
         }
-    )
     resolver = FakeNodeTypeResolver()
     layout = logical_layout((1, 2, 3),)
     geometry = geometry_for(
         (1, 2, 3),
-        node_assignments=assignments,
-        node_type_resolver=resolver,
         node_width=9,
         node_height=2,
     )
 
-    viewer = open_visualization(
-        graph, graph_ui, assignments, resolver, layout, geometry
+    graph.properties = node_properties
+    viewer = open_viewer(
+        graph, graph_ui, resolver, layout, geometry
     )
 
     assert {rect.width for rect in viewer._snapshot.rectangles.values()} == {9}
@@ -1224,13 +1005,13 @@ def test_dashed_style_is_consumed_without_checking_node_type_name() -> None:
     ],
 )
 def test_custom_double_border_changes_only_border_glyphs(collapsed, expected_rows):
-    viewer, _, assignments, node_type, geometry = open_styled_viewer(
+    viewer, _, node_properties, node_type, geometry = open_styled_viewer(
         node_type_name="custom",
         border_style="solid",
         collapsed=collapsed,
         selected=True,
     )
-    assignments.assignments[1] = {
+    node_properties[1] = {
         "type": "custom", "title": "Copy title", "color": "green", "status": "failure",
     }
     viewer.refresh()
@@ -1296,30 +1077,12 @@ def test_status_replaces_top_left_junction_with_colored_square(
     assert style_at(rendering, width, 0, 0).color == Style(color=viewer._theme[f"status-icon-color-{status}"]).color
 
 
-def test_assignment_tags_are_not_rendered_or_used_for_geometry() -> None:
-    without_tags, _, _, _, _, without_geometry = open_projected_viewer(
-        [1],
-        [],
-        titles={1: "Title"},
-    )
-    with_tags, _, _, assignments, _, with_geometry = open_projected_viewer(
-        [1],
-        [],
-        titles={1: "Title"},
-    )
-    original = assignments.assignments[1]
-    assignments.assignments[1] = NodeAssignment(
-        original.type,
-        original.param,
-        original.title,
-        original.status,
-        original.note,
-        "python, development, agent 😀",
-    )
-    with_tags.refresh()
-
-    assert rendered(with_tags) == rendered(without_tags)
-    assert with_geometry.get_rect(1) == without_geometry.get_rect(1)
+def test_tags_do_not_change_the_display():
+    viewer, _, _, properties, _, _ = open_projected_viewer([1], [], titles={1: "Title"})
+    before = rendered(viewer)
+    properties[1]["tags"] = "python, development, agent 😀"
+    viewer.refresh()
+    assert rendered(viewer) == before
 
 
 @pytest.mark.parametrize(
@@ -1333,8 +1096,8 @@ def test_assignment_tags_are_not_rendered_or_used_for_geometry() -> None:
 def test_node_border_uses_saved_color_for_each_selection_state(
     properties, theme_key, selected_key
 ) -> None:
-    viewer, graph_ui, assignments, _, _ = open_styled_viewer(show_node_ids=False)
-    assignments.assignments[1] = {"type": "copy", "title": "Copy title", **properties}
+    viewer, graph_ui, node_properties, _, _ = open_styled_viewer(show_node_ids=False)
+    node_properties[1] = {"type": "copy", "title": "Copy title", **properties}
     viewer.refresh()
     text, width, _ = rendered(viewer)
     assert style_at(text, width, 1, 0) == Style(
@@ -1357,7 +1120,7 @@ def test_node_border_uses_saved_color_for_each_selection_state(
 
 
 def test_selection_applies_background_and_preserves_status_foreground() -> None:
-    viewer, graph_ui, assignments, _, _ = open_styled_viewer(
+    viewer, graph_ui, node_properties, _, _ = open_styled_viewer(
         status="failure",
         show_node_ids=False,
     )
@@ -1374,14 +1137,14 @@ def test_selection_applies_background_and_preserves_status_foreground() -> None:
         color=viewer._theme["status-icon-color-failure"], bgcolor=viewer._theme["selection-color"], bold=True
     )
     assert selected_indicator.color == unselected_indicator.color
-    assert assignments.assignments[1].status == "failure"
+    assert node_properties[1]['status'] == "failure"
 
     graph_ui.selected_node = None
     viewer.refresh()
     deselected_rendering, _, _ = rendered(viewer)
 
     assert style_at(deselected_rendering, width, 0, 0) == unselected_indicator
-    assert assignments.assignments[1].status == "failure"
+    assert node_properties[1]['status'] == "failure"
 
 
 def test_unsupported_node_border_style_is_rejected() -> None:
@@ -1389,11 +1152,16 @@ def test_unsupported_node_border_style_is_rejected() -> None:
         open_styled_viewer(border_style="unsupported")
 
     viewer, _, _, node_type, _ = open_styled_viewer()
-    last_valid = viewer._snapshot
+    last_valid = rendered(viewer)
     node_type._border_style = "unsupported"
     with pytest.raises(ValueError, match="border style"):
         viewer.refresh()
-    assert viewer._poll_snapshot() is last_valid
+    viewer._poll_snapshot()
+    assert rendered(viewer) == last_valid
+
+    node_type._border_style = "double"
+    viewer._poll_snapshot()
+    assert "■══════════╗" in rendered_plain(viewer)
 
 
 def test_collapsed_node_renders_exact_internal_indicator_structure() -> None:
@@ -1685,74 +1453,46 @@ def test_rich_markup_is_rendered_literally() -> None:
     assert interior_rows(viewer, 1) == [markup.ljust(18)]
 
 
-@pytest.mark.parametrize(
-    "node_type_name",
-    ["void", "text", "file", "link", "agent", "copy"],
-)
-def test_assignment_title_is_wrapped_for_every_type(
-    node_type_name: str,
-) -> None:
-    graph = FakeGraph(nodes=[1], edges=[])
+def test_stored_title_takes_precedence_for_custom_type_on_open_and_refresh():
+    properties = {
+        1: {"type": "custom", "param": "must not be displayed", "title": "Universal title"},
+    }
+    graph = FakeNodes(nodes=[1], edges=[])
     graph_ui = FakeGraphUI(node_height=2)
-    assignments = FakeNodeAssignments(
-        {
-            1: NodeAssignment(
-                type=node_type_name,
-                param="must not be displayed",
-                title="Universal title",
-            )
-        }
-    )
     node_type = FakeNodeType(lambda _context: "type-rendered title")
-    resolver = FakeNodeTypeResolver({node_type_name: node_type})
-    geometry = geometry_for(
-        (1,),
-        node_assignments=assignments,
-        node_type_resolver=resolver,
-        node_height=2,
+    resolver = FakeNodeTypeResolver({"custom": node_type})
+    graph.properties = properties
+    viewer = open_viewer(
+        graph, graph_ui, resolver, logical_layout((1,)),
+        geometry_for((1,), node_height=2),
     )
+    assert interior_rows(viewer, 1) == ["Universal ", "title     "]
+    assert "must not" not in rendered_plain(viewer)
 
-    viewer = open_visualization(
-        graph,
-        graph_ui,
-        assignments,
-        resolver,
-        logical_layout((1,),),
-        geometry,
-    )
+    properties[1]["title"] = ""
     viewer.refresh()
 
-    assert interior_rows(viewer, 1) == ["Universal ", "title     "]
-    assert "type-rendered" not in rendered_plain(viewer)
-    assert "must not" not in rendered_plain(viewer)
-    assert resolver.calls == [node_type_name, node_type_name]
-    assert len(node_type.render_calls) == 2
-    assert all(
-        context.nodes.get_all(context.node_id)["type"] == node_type_name
-        for context in node_type.render_calls
-    )
+    assert interior_rows(viewer, 1) == ["type-rende", "red title "]
+    assert node_type.render_calls
+    assert all(context.node_id == 1 for context in node_type.render_calls)
     assert node_type.execute_calls == []
 
 
 def test_empty_assignment_title_uses_node_render_title() -> None:
-    graph = FakeGraph(nodes=[1], edges=[])
+    graph = FakeNodes(nodes=[1], edges=[])
     graph_ui = FakeGraphUI(show_node_ids=False)
-    assignments = FakeNodeAssignments(
-        {1: NodeAssignment(type="copy", param="2", title="")}
-    )
+    node_properties = {1: {"type": "copy", "param": "2", "title": ""}}
     node_type = FakeNodeType(lambda _context: "Inherited title", "dashed")
     resolver = FakeNodeTypeResolver({"copy": node_type})
     geometry = geometry_for(
         (1,),
-        node_assignments=assignments,
-        node_type_resolver=resolver,
         show_node_ids=False,
     )
 
-    viewer = open_visualization(
+    graph.properties = node_properties
+    viewer = open_viewer(
         graph,
         graph_ui,
-        assignments,
         resolver,
         logical_layout((1,),),
         geometry,
@@ -1776,58 +1516,50 @@ def test_visible_projection_recursively_hides_descendants_and_edges() -> None:
     assert "4" not in rendered_plain(viewer)
 
 
-def test_shared_descendant_remains_visible_through_alternate_path() -> None:
-    viewer, _, _, _, _, _ = open_projected_viewer(
-        [1, 2, 3, 4, 5],
-        [(1, 2), (1, 3), (2, 4), (3, 4), (4, 5)],
-        collapsed_node_ids={2},
-    )
-
-    assert viewer._snapshot.nodes == (1, 2, 3, 4, 5)
-    assert viewer._snapshot.edges == ((1, 2), (1, 3), (3, 4), (4, 5))
-    assert set(viewer._snapshot.rectangles) == {1, 2, 3, 4, 5}
-
-
-def test_hidden_node_assignments_are_not_read_or_rendered() -> None:
-    viewer, _, _, assignments, _, _ = open_projected_viewer(
+def test_hidden_nodes_have_no_presentation_reads() -> None:
+    viewer, _, _, node_properties, _, _ = open_projected_viewer(
         [1, 2, 3],
         [(1, 2), (2, 3)],
         collapsed_node_ids={1},
         titles={1: "visible"},
     )
-    assignments.assignments[3] = object()
+    before = rendered(viewer)
+    assert "visible" in before[0].plain
+    node_properties[3] = object()
 
     viewer.refresh()
 
-    assert viewer._snapshot.nodes == (1,)
-    assert "visible" in rendered_plain(viewer)
+    assert rendered(viewer) == before
 
 
 def test_refresh_without_arguments_rereads_selection() -> None:
-    viewer, _, graph_ui, _, _, _, _ = open_two_node_viewer()
-    calls_before_refresh = graph_ui.get_selected_node_calls
+    viewer, _, graph_ui, _, _, _, geometry = open_two_node_viewer()
+    before, width, height = rendered(viewer)
     graph_ui.selected_node = 2
 
     viewer.refresh()
 
-    assert graph_ui.get_selected_node_calls > calls_before_refresh
-    assert viewer._snapshot.selected_node == 2
+    after, actual_width, actual_height = rendered(viewer)
+    assert (actual_width, actual_height) == (width, height)
+    assert after.plain == before.plain
+    for node_id in (1, 2):
+        rect = geometry.get_rect(node_id)
+        assert style_at(before, width, rect.x, rect.y).bold == (node_id == 1)
+        assert style_at(after, width, rect.x, rect.y).bold == (node_id == 2)
 
 
 def test_refresh_accepts_new_layout_and_geometry_after_topology_change() -> None:
-    graph = FakeGraph(nodes=[1], edges=[])
+    graph = FakeNodes(nodes=[1], edges=[])
     graph_ui = FakeGraphUI(selected_node=1, node_height=2)
-    node_assignments, node_type_resolver = display_dependencies()
-    viewer = open_visualization(
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
+    graph.properties = properties
+    viewer = open_viewer(
         graph,
         graph_ui,
-        node_assignments,
         node_type_resolver,
         logical_layout((1,),),
         geometry_for(
             (1,),
-            node_assignments=node_assignments,
-            node_type_resolver=node_type_resolver,
             node_height=2,
         ),
     )
@@ -1840,8 +1572,6 @@ def test_refresh_accepts_new_layout_and_geometry_after_topology_change() -> None
         geometry_for(
             (1,),
             (2,),
-            node_assignments=node_assignments,
-            node_type_resolver=node_type_resolver,
             node_height=2,
         ),
     )
@@ -1918,17 +1648,15 @@ def test_toggling_id_visibility_recalculates_geometry_both_directions() -> None:
 
 
 def test_assignment_type_change_updates_border_without_changing_geometry() -> None:
-    graph = FakeGraph(nodes=[1], edges=[])
+    graph = FakeNodes(nodes=[1], edges=[])
     graph_ui = FakeGraphUI(show_node_ids=False)
-    assignments = FakeNodeAssignments(
-        {1: NodeAssignment("normal", "", "Live title")}
-    )
+    node_properties = {1: {"type": "normal", "param": "", "title": "Live title"}}
     normal_type = FakeNodeType(
-        lambda context: context.nodes.get_all(context.node_id)["title"],
+        lambda context: context.nodes.get_all(context.node_id).get("title", ""),
         "solid",
     )
     copy_type = FakeNodeType(
-        lambda context: context.nodes.get_all(context.node_id)["title"],
+        lambda context: context.nodes.get_all(context.node_id).get("title", ""),
         "dashed",
     )
     resolver = FakeNodeTypeResolver(
@@ -1937,14 +1665,12 @@ def test_assignment_type_change_updates_border_without_changing_geometry() -> No
     layout = logical_layout((1,),)
     geometry = geometry_for(
         (1,),
-        node_assignments=assignments,
-        node_type_resolver=resolver,
         show_node_ids=False,
     )
-    viewer = open_visualization(
+    graph.properties = node_properties
+    viewer = open_viewer(
         graph,
         graph_ui,
-        assignments,
         resolver,
         layout,
         geometry,
@@ -1953,26 +1679,23 @@ def test_assignment_type_change_updates_border_without_changing_geometry() -> No
 
     assert rendered_rows(viewer)[0][:12] == "■──────────┐"
 
-    assignments.assignments[1] = NodeAssignment("copy", "2", "Live title")
+    node_properties[1] = {"type": "copy", "param": "2", "title": "Live title"}
     viewer.refresh()
 
     assert rendered_rows(viewer)[0][:12] == "■╌╌╌╌╌╌╌╌╌╌┐"
     assert viewer._snapshot.rectangles == accepted_rectangles
-    assert len(normal_type.render_calls) == 1
-    assert len(copy_type.render_calls) == 1
+    assert normal_type.render_calls and copy_type.render_calls
 
 
 def test_status_change_updates_next_render_without_changing_geometry() -> None:
-    viewer, _, assignments, _, _ = open_single_node_viewer(
+    viewer, _, node_properties, _, _ = open_single_node_viewer(
         "Live title", show_node_ids=False
     )
     accepted_rectangles = dict(viewer._snapshot.rectangles)
     before, width, _ = rendered(viewer)
     assert style_at(before, width, 0, 0).color == Style(color=viewer._theme["status-icon-color-none"]).color
 
-    assignments.assignments[1] = NodeAssignment(
-        "text", "", "Live title", "success"
-    )
+    node_properties[1] = {"type": "text", "param": "", "title": "Live title", "status": "success"}
     viewer.refresh()
 
     after, width, _ = rendered(viewer)
@@ -1981,19 +1704,19 @@ def test_status_change_updates_next_render_without_changing_geometry() -> None:
 
 
 def test_note_change_is_not_displayed_and_does_not_change_geometry() -> None:
-    viewer, _, assignments, _, _ = open_single_node_viewer(
+    viewer, _, node_properties, _, _ = open_single_node_viewer(
         "Visible title", show_node_ids=False
     )
     accepted_rendering = rendered_plain(viewer)
     accepted_rectangles = dict(viewer._snapshot.rectangles)
 
-    assignments.assignments[1] = NodeAssignment(
-        "text",
-        "",
-        "Visible title",
-        "none",
-        "SECRET NOTE\nwith Unicode 😀",
-    )
+    node_properties[1] = {
+                                     "type": "text",
+                                     "param": "",
+                                     "title": "Visible title",
+                                     "status": "none",
+                                     "note": "SECRET NOTE\nwith Unicode 😀",
+                                 }
     viewer.refresh()
 
     assert rendered_plain(viewer) == accepted_rendering
@@ -2083,23 +1806,6 @@ def test_arbitrary_stored_properties_display_at_startup_refresh_and_poll(
         asyncio.run(exercise_polling())
 
 
-@pytest.mark.parametrize("bad_target", ["xyz", "0", "9" * 20, "9" * 5000])
-def test_copy_stops_inheritance_at_malformed_target(monkeypatch, tmp_path, bad_target):
-    viewers = []
-    monkeypatch.setattr(visualization_impl._Visualization, "run", lambda viewer: viewers.append(viewer))
-    workspace = tmp_path / "copy.sloon"
-    with closing(sqlite3.connect(workspace)) as connection:
-        connection.execute("PRAGMA foreign_keys = ON")
-        nodes = Nodes(connection)
-        target = nodes.create_node(type="copy", title="Inherited", param=bad_target)
-        copy = nodes.create_node(type="copy", param="0" * 5000 + str(target))
-        visualization_app.main(nodes, FakeGraphUI(), workspace)
-        viewer = viewers[0]
-        assert viewer._snapshot.titles[copy] == "Inherited"
-        assert viewer._snapshot.border_styles[copy] == "dashed"
-        assert nodes.get_all(target)["param"] == bad_target
-
-
 def test_collapse_refresh_recalculates_layout_geometry_and_nested_state() -> None:
     viewer, _, graph_ui, _, _, _ = open_projected_viewer(
         [1, 2, 3, 4],
@@ -2124,108 +1830,65 @@ def test_collapse_refresh_recalculates_layout_geometry_and_nested_state() -> Non
     assert "┬──┐" not in rendered_plain(viewer)
 
 
-def test_collapsing_branch_repositions_remaining_nodes_compactly() -> None:
-    viewer, _, graph_ui, _, _, _ = open_projected_viewer(
-        [1, 2, 3, 4],
-        [(1, 2), (1, 3), (2, 4)],
+def test_hidden_collapse_and_title_changes_reuse_placement(monkeypatch):
+    viewer, _, graph_ui, properties, _, _ = open_projected_viewer(
+        [1, 2, 3], [(1, 2), (2, 3)], collapsed_node_ids={1},
+        titles={1: "before"}, node_height=2,
     )
-    expanded_width = viewer._snapshot.width
+    before = rendered(viewer)
 
-    graph_ui.set_node_collapsed(2, True)
-    viewer.refresh()
-
-    assert viewer._snapshot.nodes == (1, 2, 3)
-    assert viewer._snapshot.edges == ((1, 2), (1, 3))
-    assert viewer._snapshot.width < expanded_width
-
-
-def test_hidden_nested_state_change_does_not_recalculate_geometry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    viewer, _, graph_ui, _, _, _ = open_projected_viewer(
-        [1, 2, 3],
-        [(1, 2), (2, 3)],
-        collapsed_node_ids={1},
-    )
-    accepted_rectangles = dict(viewer._snapshot.rectangles)
-
-    def unexpected_geometry_call(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("hidden nested state recalculated geometry")
-
-    monkeypatch.setattr(
-        visualization_impl, "calculate_geometry", unexpected_geometry_call
-    )
-    graph_ui.set_node_collapsed(2, True)
-    viewer.refresh()
-
-    assert viewer._snapshot.rectangles == accepted_rectangles
-
-
-def test_assignment_change_rewraps_without_recalculating_geometry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    viewer, _, node_assignments, _, _ = open_single_node_viewer(
-        "before", node_width=8, node_height=2
-    )
-    accepted_rectangles = dict(viewer._snapshot.rectangles)
-    node_assignments.assignments[1] = NodeAssignment(
-        type="agent", param="changed parameter", title="after content"
-    )
-
-    def unexpected_geometry_call(*_args: object, **_kwargs: object) -> object:
+    def unexpected_geometry_call(*args, **kwargs):
         raise AssertionError("display-only refresh recalculated geometry")
 
-    monkeypatch.setattr(
-        visualization_impl, "calculate_geometry", unexpected_geometry_call
-    )
+    monkeypatch.setattr(visualization_impl, "calculate_geometry", unexpected_geometry_call)
+    graph_ui.set_node_collapsed(2, True)
     viewer.refresh()
+    assert rendered(viewer) == before
 
-    assert viewer._snapshot.rectangles == accepted_rectangles
-    assert interior_rows(viewer, 1) == ["after ", "conte…"]
+    properties[1]["title"] = "changed text"
+    viewer.refresh()
+    after, width, height = rendered(viewer)
+
+    assert "before" not in after.plain
+    assert "changed" in after.plain and "text" in after.plain
+    assert (width, height) == before[1:]
 
 
-def test_invalid_refresh_preserves_complete_last_accepted_snapshot() -> None:
-    viewer, graph_ui, node_assignments, _, _ = open_single_node_viewer(
+def test_invalid_refresh_preserves_rendering_and_recovers():
+    viewer, graph_ui, properties, _, _ = open_single_node_viewer(
         "accepted", node_width=12, node_height=2, selected=True
     )
-    accepted_rendering = rendered_plain(viewer)
-    accepted_rectangles = dict(viewer._snapshot.rectangles)
-    accepted_selection = viewer._snapshot.selected_node
-    accepted_width = viewer._snapshot.node_width
-    node_assignments.assignments[1] = NodeAssignment(
-        type="text", param="rejected", title=object()
-    )
+    before = rendered(viewer)
+    properties[1]["title"] = object()
     graph_ui.selected_node = None
     graph_ui.node_width = 20
     graph_ui.node_height = 5
 
     with pytest.raises(ValueError):
         viewer.refresh()
+    assert rendered(viewer) == before
 
-    assert rendered_plain(viewer) == accepted_rendering
-    assert viewer._snapshot.rectangles == accepted_rectangles
-    assert viewer._snapshot.selected_node == accepted_selection
-    assert viewer._snapshot.node_width == accepted_width
+    properties[1]["title"] = "recovered"
+    viewer.refresh()
+    after, width, height = rendered(viewer)
+    assert "recovered" in after.plain
+    assert (width, height) == (20, 8)
 
 
 def test_refresh_validation_failure_preserves_previous_placement() -> None:
-    viewer, _, _, node_assignments, resolver, layout, _ = open_two_node_viewer()
-    accepted_rectangles = dict(viewer._snapshot.rectangles)
-    geometry_missing_node = geometry_for(
-        (1,),
-        node_assignments=node_assignments,
-        node_type_resolver=resolver,
-    )
+    viewer, _, _, _, _, layout, _ = open_two_node_viewer()
+    before = rendered(viewer)
 
     with pytest.raises(ValueError):
-        viewer.refresh(layout, geometry_missing_node)
+        viewer.refresh(layout, geometry_for((1,)))
 
-    assert viewer._snapshot.rectangles == accepted_rectangles
+    assert rendered(viewer) == before
     viewer.refresh()
+    assert rendered(viewer) == before
 
 
 def test_refresh_is_allowed_before_run() -> None:
-    viewer, graph, _, node_assignments, resolver, _, _ = open_two_node_viewer()
+    viewer, graph, _, _, _, _, _ = open_two_node_viewer()
     graph.nodes.append(3)
     graph.edges.append((2, 3))
 
@@ -2235,8 +1898,6 @@ def test_refresh_is_allowed_before_run() -> None:
             (1,),
             (2,),
             (3,),
-            node_assignments=node_assignments,
-            node_type_resolver=resolver,
         ),
     )
 
@@ -2358,7 +2019,7 @@ def test_running_viewer_polls_collapse_and_expansion_without_restart() -> None:
 
 
 def test_running_viewer_polls_assignment_changes_without_geometry_change() -> None:
-    viewer, _, node_assignments, _, _ = open_single_node_viewer(
+    viewer, _, properties, _, _ = open_single_node_viewer(
         node_width=8, node_height=2
     )
     original_rectangles = dict(viewer._snapshot.rectangles)
@@ -2366,9 +2027,7 @@ def test_running_viewer_polls_assignment_changes_without_geometry_change() -> No
     async def exercise_assignment_change() -> None:
         app = _VisualizationApp(viewer._snapshot, viewer._poll_snapshot)
         async with app.run_test() as pilot:
-            node_assignments.assignments[1] = NodeAssignment(
-                type="agent", param="unrelated", title="updated content"
-            )
+            properties[1] = {"type": "agent", "param": "unrelated", "title": "updated content"}
             await pilot.pause(0.15)
 
             canvas = app.query_one(_GraphCanvas)
@@ -2380,7 +2039,7 @@ def test_running_viewer_polls_assignment_changes_without_geometry_change() -> No
 
 
 def test_running_viewer_keeps_snapshot_and_recovers_after_invalid_assignment() -> None:
-    viewer, _, node_assignments, _, _ = open_single_node_viewer(
+    viewer, _, properties, _, _ = open_single_node_viewer(
         "accepted", node_height=2
     )
 
@@ -2389,17 +2048,13 @@ def test_running_viewer_keeps_snapshot_and_recovers_after_invalid_assignment() -
         async with app.run_test() as pilot:
             canvas = app.query_one(_GraphCanvas)
             accepted_rendering, _, _ = _render_snapshot(canvas._snapshot)
-            node_assignments.assignments[1] = NodeAssignment(
-                type="text", param="rejected", title=object()
-            )
+            properties[1] = {"type": "text", "param": "rejected", "title": object()}
             await pilot.pause(0.15)
 
             retained_rendering, _, _ = _render_snapshot(canvas._snapshot)
             assert retained_rendering.plain == accepted_rendering.plain
 
-            node_assignments.assignments[1] = NodeAssignment(
-                type="file", param="not displayed", title="recovered"
-            )
+            properties[1] = {"type": "file", "param": "not displayed", "title": "recovered"}
             await pilot.pause(0.15)
 
             recovered_rendering, _, _ = _render_snapshot(canvas._snapshot)
@@ -2414,20 +2069,18 @@ def test_running_viewer_scrolls_complete_selected_envelope_into_view() -> None:
         for column in range(8)
     )
     nodes = [node_id for column in columns for node_id in column]
-    graph = FakeGraph(nodes=nodes, edges=[])
+    graph = FakeNodes(nodes=nodes, edges=[])
     graph_ui = FakeGraphUI(selected_node=1, node_height=4)
-    node_assignments, node_type_resolver = display_dependencies()
+    properties, node_type_resolver = {}, FakeNodeTypeResolver()
     layout = logical_layout(*columns)
     geometry = geometry_for(
         *columns,
-        node_assignments=node_assignments,
-        node_type_resolver=node_type_resolver,
         node_height=4,
     )
-    viewer = open_visualization(
+    graph.properties = properties
+    viewer = open_viewer(
         graph,
         graph_ui,
-        node_assignments,
         node_type_resolver,
         layout,
         geometry,

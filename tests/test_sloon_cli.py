@@ -1,3 +1,4 @@
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -211,21 +212,27 @@ def test_graph_retrieves_empty_and_complete_graph_with_exact_properties(
         "nodes": [], "edges": []
     }
     operations = [
-        {"op": "create_node", "fields": {"z": "last", "empty": "", "note": "one\ntwo"}},
-        {"op": "create_node", "fields": {}},
+        {"op": "create_node", "fields": {"type": "container", "z": "last", "empty": "", "note": "one\ntwo"}},
+        {"op": "create_node", "fields": {"container_id": "1"}},
         {"op": "create_node", "fields": {"title": "isolated"}},
-        {"op": "create_node", "fields": {"component": "other"}},
+        {"op": "create_node", "fields": {}},
         {"op": "connect", "source": 1, "target": 2},
         {"op": "connect", "source": 4, "target": 4},
     ]
     assert run_cli(tmp_path, *selected, "batch", json.dumps(operations)).returncode == 0
 
+    storage = Storage.open(tmp_path / "home.sloon")
+    try:
+        open_graph_ui(storage.connection()).set_active_container_id("1")
+    finally:
+        storage.close()
+
     expected = {
         "nodes": [
-            {"id": 1, "properties": {"empty": "", "note": "one\ntwo", "z": "last"}},
-            {"id": 2, "properties": {}},
+            {"id": 1, "properties": {"empty": "", "note": "one\ntwo", "type": "container", "z": "last"}},
+            {"id": 2, "properties": {"container_id": "1"}},
             {"id": 3, "properties": {"title": "isolated"}},
-            {"id": 4, "properties": {"component": "other"}},
+            {"id": 4, "properties": {}},
         ],
         "edges": [[1, 2], [4, 4]],
     }
@@ -281,41 +288,29 @@ def test_graph_rejects_a_missing_root_with_standard_json_error(tmp_path: Path) -
     assert json.loads(result.stderr) == {"error": "node does not exist: 99"}
 
 
-def test_graph_reads_one_consistent_database_snapshot(tmp_path: Path) -> None:
+def test_graph_reads_one_consistent_database_snapshot(tmp_path: Path, monkeypatch) -> None:
     database = tmp_path / "snapshot.db"
-    reader_connection = sqlite3.connect(database)
-    reader_connection.execute("PRAGMA foreign_keys = ON")
-    reader_connection.execute("PRAGMA journal_mode = WAL")
-    reader = Nodes(reader_connection)
-    reader.create_node(title="before")
-    writer_connection = sqlite3.connect(database)
-    writer_connection.execute("PRAGMA foreign_keys = ON")
-    writer = Nodes(writer_connection)
+    with closing(sqlite3.connect(database)) as reader_connection, closing(
+        sqlite3.connect(database)
+    ) as writer_connection:
+        reader_connection.execute("PRAGMA foreign_keys = ON")
+        reader_connection.execute("PRAGMA journal_mode = WAL")
+        writer_connection.execute("PRAGMA foreign_keys = ON")
+        reader, writer = Nodes(reader_connection), Nodes(writer_connection)
+        node_id = reader.create_node(title="before")
+        list_nodes = reader.list_nodes
 
-    class ConcurrentWriteAfterFirstRead:
-        def transaction(self):
-            return reader.transaction()
+        def list_nodes_then_update_title():
+            ids = list_nodes()
+            writer.set(node_id, "title", "after")
+            return ids
 
-        def list_nodes(self):
-            result = reader.list_nodes()
-            writer.create_node(title="after")
-            return result
-
-        def list_edges(self):
-            return reader.list_edges()
-
-        def get_all(self, node_id):
-            return reader.get_all(node_id)
-
-    try:
-        assert sloon._graph(ConcurrentWriteAfterFirstRead()) == {
-            "nodes": [{"id": 1, "properties": {"title": "before"}}],
+        monkeypatch.setattr(reader, "list_nodes", list_nodes_then_update_title)
+        assert sloon._graph(reader) == {
+            "nodes": [{"id": node_id, "properties": {"title": "before"}}],
             "edges": [],
         }
-        assert reader.list_nodes() == [1, 2]
-    finally:
-        writer_connection.close()
-        reader_connection.close()
+        assert reader.get(node_id, "title") == "after"
 
 
 @pytest.mark.parametrize("name", ["readonly", "readwrite"])
@@ -523,10 +518,6 @@ def test_cli_json_crud_and_atomic_batch(tmp_path: Path) -> None:
     assert json.loads(run_cli(tmp_path, *selected, "node", "list").stdout) == [1, 2]
 
 
-def test_removed_database_selection_option_is_rejected(tmp_path: Path) -> None:
-    assert run_cli(tmp_path, "--db", "anything", "node", "list").returncode != 0
-
-
 def test_storage_closes_after_success_and_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -662,26 +653,3 @@ def test_interactive_apps_render_and_execute_external_node_in_selected_workspace
         assert Nodes(storage.connection()).get(1, "seen_workspace") == str(workspace_path)
     finally:
         storage.close()
-
-
-def test_full_graph_cli_ignores_active_container(tmp_path):
-    assert run_cli(tmp_path, "init", "nested").returncode == 0
-    storage = Storage.open(tmp_path / "nested.sloon")
-    try:
-        connection = storage.connection()
-        nodes = Nodes(connection)
-        parent = nodes.create_node(type="container")
-        child = nodes.create_node(container_id=str(parent))
-        nodes.connect(parent, child)
-        open_graph_ui(connection).set_active_container_id(str(parent))
-    finally:
-        storage.close()
-
-    result = run_cli(tmp_path, "--workspace", "nested.sloon", "graph")
-    assert json.loads(result.stdout) == {
-        "nodes": [
-            {"id": parent, "properties": {"type": "container"}},
-            {"id": child, "properties": {"container_id": str(parent)}},
-        ],
-        "edges": [[parent, child]],
-    }

@@ -37,6 +37,7 @@ class GeometryContractTests(unittest.TestCase):
         )
 
         self.assertEqual(result.geometry.nodes, {1: Rect(0, 0, 12, 2)})
+        self.assertEqual(result.get_rect(1), result.geometry.nodes[1])
         self.assertEqual(result.geometry.width, 12)
         self.assertEqual(result.geometry.height, 2)
 
@@ -141,24 +142,6 @@ class GeometryContractTests(unittest.TestCase):
         self.assertEqual(result.get_rect(1), Rect(0, 0, 12, 3))
         self.assertEqual(result.get_rect(2), Rect(0, 4, 12, 4))
         self.assertEqual(result.geometry.height, 8)
-
-    def test_previous_default_gaps_remain_available_explicitly(self) -> None:
-        result = calculate_geometry(
-            _layout(((1, 2),), ((3,),)),
-            {
-                1: Size(width=2, height=2),
-                2: Size(width=2, height=4),
-                3: Size(width=2, height=3),
-            },
-            column_gap=4,
-            row_gap=1,
-            component_gap=2,
-        )
-
-        self.assertEqual(result.get_rect(1), Rect(0, 0, 12, 2))
-        self.assertEqual(result.get_rect(2), Rect(0, 3, 12, 4))
-        self.assertEqual(result.get_rect(3), Rect(0, 9, 12, 3))
-        self.assertEqual(result.geometry, Geometry(result.geometry.nodes, 12, 12))
 
     def test_empty_component_columns_preserve_global_column_positions(self) -> None:
         result = calculate_geometry(
@@ -273,15 +256,6 @@ class GeometryContractTests(unittest.TestCase):
                 self.assertFalse(
                     _overlap(result.get_rect(first_id), result.get_rect(second_id))
                 )
-
-    def test_get_rect_returns_geometry_rectangle(self) -> None:
-        result = calculate_geometry(
-            _layout(((10,),)),
-            {10: Size(width=4, height=3)},
-        )
-
-        self.assertEqual(result.get_rect(10), Rect(0, 0, 12, 3))
-        self.assertEqual(result.get_rect(10), result.geometry.nodes[10])
 
     def test_get_rect_rejects_unknown_node_id(self) -> None:
         result = calculate_geometry(

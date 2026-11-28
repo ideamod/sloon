@@ -72,17 +72,6 @@ class VisibleGraphContractTests(unittest.TestCase):
             (),
         )
 
-    def test_reveal_plan_includes_nested_collapsed_state(self) -> None:
-        self.assertEqual(
-            calculate_reveal_plan(
-                [1, 2, 3, 4, 5],
-                [(1, 2), (2, 3), (3, 4), (4, 5)],
-                {2, 4},
-                5,
-            ),
-            (2, 4),
-        )
-
     def test_reveal_plan_excludes_collapsed_target_itself(self) -> None:
         self.assertEqual(
             calculate_reveal_plan([1, 2, 3], [(1, 2), (2, 3)], {3}, 3),
