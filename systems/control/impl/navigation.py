@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Callable
 import json
 from pathlib import Path
@@ -14,6 +15,7 @@ from systems.visible_graph import (
     VisibleGraph,
     calculate_reveal_plan,
     calculate_visible_graph,
+    filter_container_graph,
 )
 
 from ..spec.api import NODE_COLORS, ControlAPI, Direction, NodeInfo, TitleSearchResult
@@ -88,6 +90,30 @@ class _Control:
         self._resolve_node_type = resolve_node_type
         self._workspace_path = workspace_path
 
+    def enter_container(self) -> bool:
+        with self._nodes.transaction():
+            selected = self._existing_selection()
+            if selected is None or self._nodes.get(selected, "type", "") != "container":
+                return False
+            self._graph_ui.set_active_container_id(str(selected))
+            self._graph_ui.select_node(None)
+        return True
+
+    def leave_container(self) -> bool:
+        with self._nodes.transaction():
+            if not self._graph_ui.get_active_container_id():
+                return False
+            _, _, active_id = self._active_graph()
+            if not active_id:
+                self._graph_ui.set_active_container_id("")
+                self._graph_ui.select_node(None)
+                return True
+            exited = int(active_id)
+            parent_id = self._nodes.get(exited, "container_id", "")
+            self._graph_ui.set_active_container_id(parent_id)
+            self.select_node(exited)
+        return True
+
     def select_node(self, node_id: int) -> bool:
         if not self.reveal_node(node_id):
             return False
@@ -97,8 +123,9 @@ class _Control:
     def reveal_node(self, node_id: int) -> bool:
         if type(node_id) is not int or not self._nodes.node_exists(node_id):
             return False
-        nodes = self._nodes.list_nodes()
-        edges = self._nodes.list_edges()
+        nodes, edges, _ = self._active_graph()
+        if node_id not in nodes:
+            return False
         collapsed = self._graph_ui.get_collapsed_node_ids()
         plan = calculate_reveal_plan(nodes, edges, collapsed, node_id)
         if plan is None:
@@ -124,15 +151,20 @@ class _Control:
         if not needle:
             return ()
 
+        active_id = self._graph_ui.get_active_container_id()
+        if active_id:
+            _, _, active_id = self._active_graph()
         results: list[TitleSearchResult] = []
         for node_id in self._nodes.list_nodes():
             try:
                 properties = self._nodes.get_many(
-                    [node_id], ["title", "type", "status"]
+                    [node_id], ["title", "type", "status", "container_id"]
                 )[node_id]
             except ValueError:
                 # The graph may change between listing nodes and reading an
                 # assignment. A deleted node is no longer a search result.
+                continue
+            if properties.get("container_id", "") != active_id:
                 continue
             properties = _effective_properties(properties)
             if not properties["title"] or needle not in properties["title"].casefold():
@@ -148,7 +180,8 @@ class _Control:
         return tuple(results)
 
     def move(self, direction: Direction) -> int | None:
-        visible_graph = self._visible_graph()
+        members, edges, _ = self._active_graph()
+        visible_graph = self._visible_graph(members, edges)
         selected = self._existing_selection(visible_graph)
         if selected is None:
             if not visible_graph.nodes:
@@ -182,60 +215,102 @@ class _Control:
         return target
 
     def create_output(self) -> int | None:
-        selected = self._existing_selection()
-        if selected is None:
-            return None
-
         with self._nodes.transaction():
-            new_node = self._nodes.create_node()
+            members, edges, active_id = self._active_graph()
+            selected = self._existing_selection(self._visible_graph(members, edges))
+            if selected is None:
+                return None
+            new_node = self._create_node(active_id)
             self._nodes.connect(selected, new_node)
-        self._graph_ui.select_node(new_node)
+            self._graph_ui.select_node(new_node)
         return new_node
 
     def create_input(self) -> int | None:
-        selected = self._existing_selection()
-        if selected is None:
-            return None
-
         with self._nodes.transaction():
-            new_node = self._nodes.create_node()
+            members, edges, active_id = self._active_graph()
+            selected = self._existing_selection(self._visible_graph(members, edges))
+            if selected is None:
+                return None
+            new_node = self._create_node(active_id)
             self._nodes.connect(new_node, selected)
-        self._graph_ui.select_node(new_node)
+            self._graph_ui.select_node(new_node)
         return new_node
 
     def create_node(self) -> int:
-        new_node = self._nodes.create_node()
-        self._graph_ui.select_node(new_node)
+        with self._nodes.transaction():
+            _, _, active_id = self._active_graph()
+            new_node = self._create_node(active_id)
+            self._graph_ui.select_node(new_node)
         return new_node
 
+    def _create_node(self, container_id: str) -> int:
+        if container_id:
+            return self._nodes.create_node(container_id=container_id)
+        return self._nodes.create_node()
+
     def delete_selected(self) -> int | None:
-        selected = self._existing_selection()
-        if selected is None:
-            return None
-        inputs = self._nodes.inputs(selected)
-        self._nodes.delete_node(selected)
-        if inputs:
-            self._graph_ui.select_node(inputs[0])
+        with self._nodes.transaction():
+            members, edges, _ = self._active_graph()
+            selected = self._existing_selection(self._visible_graph(members, edges))
+            if selected is None:
+                return None
+            is_container = self._nodes.get(selected, "type", "") == "container"
+            if is_container:
+                deleted = self._delete_container(selected)
+            else:
+                self._nodes.delete_node(selected)
+                deleted = {selected}
+            first_input = next(
+                (
+                    source for source, target in edges
+                    if target == selected and source not in deleted
+                ),
+                None,
+            )
+            if first_input is not None or is_container:
+                self._graph_ui.select_node(first_input)
         return selected
 
-    def connect(self, target_id: int) -> bool:
-        selected = self._existing_selection()
-        if (
-            selected is None
-            or type(target_id) is not int
-            or target_id == selected
-            or not self._nodes.node_exists(target_id)
-        ):
-            return False
+    def _delete_container(self, container_id: int) -> set[int]:
+        properties = self._nodes.get_many(
+            self._nodes.list_nodes(), ["type", "container_id"],
+        )
+        children: dict[str, list[int]] = defaultdict(list)
+        for node_id, values in properties.items():
+            children[values.get("container_id", "")].append(node_id)
 
-        edge = (selected, target_id)
-        edges = self._nodes.list_edges()
-        if edge not in edges:
-            try:
-                calculate_layout(self._nodes.list_nodes(), [*edges, edge])
-            except ValueError:
+        pending = [container_id]
+        visited: set[int] = set()
+        while pending:
+            node_id = pending.pop()
+            if node_id in visited:
+                continue
+            visited.add(node_id)
+            if properties[node_id].get("type") == "container":
+                pending.extend(children.get(str(node_id), ()))
+            self._nodes.delete_node(node_id)
+        return visited
+
+    def connect(self, target_id: int) -> bool:
+        with self._nodes.transaction():
+            members, internal_edges, _ = self._active_graph()
+            selected = self._existing_selection(self._visible_graph(members, internal_edges))
+            if (
+                selected is None
+                or type(target_id) is not int
+                or target_id == selected
+                or target_id not in members
+            ):
                 return False
-        self._nodes.connect(*edge)
+
+            edge = (selected, target_id)
+            edges = self._nodes.list_edges()
+            if edge not in edges:
+                try:
+                    calculate_layout(self._nodes.list_nodes(), [*edges, edge])
+                except ValueError:
+                    return False
+            self._nodes.connect(*edge)
         return True
 
     def disconnect(self, other_id: int) -> bool:
@@ -283,8 +358,9 @@ class _Control:
         return show
 
     def toggle_selected_collapse(self) -> bool | None:
-        selected = self._existing_selection()
-        if selected is None or not self._nodes.outputs(selected):
+        members, edges, _ = self._active_graph()
+        selected = self._existing_selection(self._visible_graph(members, edges))
+        if selected is None or not any(source == selected for source, _ in edges):
             return None
         collapsed_node_ids = self._graph_ui.get_collapsed_node_ids()
         collapsed = selected not in collapsed_node_ids
@@ -294,10 +370,13 @@ class _Control:
     def set_selected_type(self, type: str) -> bool:
         if not isinstance(type, str) or not type:
             return False
-        selected = self._existing_selection()
-        if selected is None:
-            return False
-        self._nodes.set(selected, "type", type)
+        with self._nodes.transaction():
+            selected = self._existing_selection()
+            if selected is None:
+                return False
+            if type != "container" and self._nodes.get(selected, "type", "") == "container":
+                return False
+            self._nodes.set(selected, "type", type)
         return True
 
     def set_selected_param(self, param: str) -> bool:
@@ -397,9 +476,11 @@ class _Control:
 
         try:
             with self._nodes.transaction():
-                if not self._nodes.node_exists(selected):
+                members, _, active_id = self._active_graph()
+                if selected not in members:
                     return None
-                node_id = self._nodes.create_node()
+                node_id = self._create_node(active_id)
+                properties.pop("container_id", None)
                 # Property names such as "self" must be passed as data.
                 for key, value in properties.items():
                     self._nodes.set(node_id, key, value)
@@ -422,11 +503,18 @@ class _Control:
         )
         return True
 
-    def _visible_graph(self) -> VisibleGraph:
-        return calculate_visible_graph(
-            self._nodes.list_nodes(),
+    def _active_graph(self) -> tuple[list[int], list[tuple[int, int]], str]:
+        nodes = self._nodes.list_nodes()
+        return filter_container_graph(
+            nodes,
             self._nodes.list_edges(),
-            self._graph_ui.get_collapsed_node_ids(),
+            self._nodes.get_many(nodes, ["type", "container_id"]),
+            self._graph_ui.get_active_container_id(),
+        )
+
+    def _visible_graph(self, nodes: list[int], edges: list[tuple[int, int]]) -> VisibleGraph:
+        return calculate_visible_graph(
+            nodes, edges, self._graph_ui.get_collapsed_node_ids(),
         )
 
     def _existing_selection(
@@ -434,8 +522,12 @@ class _Control:
         visible_graph: VisibleGraph | None = None,
     ) -> int | None:
         selected = self._graph_ui.get_selected_node()
-        visible = visible_graph or self._visible_graph()
-        if selected is None or selected not in visible.nodes:
+        if selected is None:
+            return None
+        if visible_graph is None:
+            members, edges, _ = self._active_graph()
+            visible_graph = self._visible_graph(members, edges)
+        if selected not in visible_graph.nodes:
             return None
         return selected
 

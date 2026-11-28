@@ -13,12 +13,25 @@ class GraphUIAPI(Protocol):
         """Return the selected node ID, or None if none has been selected."""
         ...
 
-    def select_node(self, node_id: int) -> None:
+    def select_node(self, node_id: int | None) -> None:
         """Select node_id, replacing the previous selection.
 
-        The node does not need to exist in the graph.
+        Pass None to clear the selection. The node does not need to exist.
         The change is committed before the method returns unless the caller
         supplied an active transaction.
+        """
+        ...
+
+    def get_active_container_id(self) -> str:
+        """Return the persisted textual container ID, defaulting to root ("")."""
+        ...
+
+    def set_active_container_id(self, container_id: str) -> None:
+        """Persist the exact textual container ID, using "" for root.
+
+        Reject non-strings and strings that cannot be UTF-8 encoded with
+        ValueError. Graph UI does not check whether the container exists.
+        Join an active transaction or commit before returning.
         """
         ...
 

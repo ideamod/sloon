@@ -283,3 +283,29 @@ class GraphUIContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_active_container_persists_exact_text_and_joins_rollback(tmp_path):
+    path = tmp_path / "graph-ui.db"
+    with sqlite3.connect(path) as connection:
+        graph_ui = open_graph_ui(connection)
+        assert graph_ui.get_active_container_id() == ""
+        graph_ui.set_active_container_id("001")
+        graph_ui.select_node(20)
+        connection.execute("BEGIN")
+        graph_ui.set_active_container_id("invalid active ID")
+        graph_ui.select_node(None)
+        assert graph_ui.get_selected_node() is None
+        assert graph_ui.get_active_container_id() == "invalid active ID"
+        connection.rollback()
+    connection.close()
+
+    with sqlite3.connect(path) as reopened:
+        graph_ui = open_graph_ui(reopened)
+        assert graph_ui.get_active_container_id() == "001"
+        assert graph_ui.get_selected_node() == 20
+        graph_ui.set_active_container_id("")
+        graph_ui.select_node(None)
+        assert graph_ui.get_active_container_id() == ""
+        assert graph_ui.get_selected_node() is None
+    reopened.close()

@@ -26,7 +26,7 @@ class NodeRender:
 
         border_style:
             Visual border style. Supported values:
-            "solid" and "dashed".
+            "solid", "dashed", and "double".
     """
 
     title: str
@@ -144,14 +144,19 @@ def resolve_node_type(type_name: str) -> NodeType:
 Node Types provides extensible node behavior through independently
 implemented node types.
 
+Container
+---------
+The built-in "container" type returns a double border and the fallback title
+"Container". Its execute method has no effect. Control owns navigation and
+membership operations.
+
 Testing Contract
 ----------------
 The Node Types contract test suite must:
 
 - Test shared infrastructure: resolver, discovery, protocol,
   context, fallback, and error handling.
-- Test the behavior of only three built-in types:
-  void, text, and copy.
+- Test the behavior of void, text, copy, and container.
 - Not require dedicated behavioral tests for file, link,
   agent, or any future custom types.
 - Allow custom types to maintain independent test suites.

@@ -774,3 +774,11 @@ def test_copy_does_not_inherit_target_graph_edges() -> None:
     assert graph.get_outputs(1) == []
     assert graph.snapshot() == graph_before
     assert assignments.snapshot() == assignments_before
+
+
+def test_container_type_renders_a_distinct_border_and_executes_nothing(tmp_path):
+    container = resolver_module.resolve_node_type("container")
+    context = NodeContext(node_id=1, workspace_path=tmp_path, nodes=None)
+    assert container.type == "container"
+    assert container.render(context) == NodeRender(title="Container", border_style="double")
+    assert container.execute(context) is None

@@ -8,6 +8,7 @@ from ..spec.api import GraphUIAPI
 
 
 _SELECTED_NODE = "SELECTED_NODE"
+_ACTIVE_CONTAINER_ID = "ACTIVE_CONTAINER_ID"
 _NODE_WIDTH = "NODE_WIDTH"
 _DEFAULT_NODE_WIDTH = 12
 _NODE_HEIGHT = "NODE_HEIGHT"
@@ -40,12 +41,38 @@ class _GraphUI:
         ).fetchone()
         return None if row is None else row[0]
 
-    def select_node(self, node_id: int) -> None:
+    def select_node(self, node_id: int | None) -> None:
+        transaction_was_active = self._connection.in_transaction
+        if node_id is None:
+            self._connection.execute(
+                "DELETE FROM graph_ui_params WHERE parameter = ?",
+                (_SELECTED_NODE,),
+            )
+        else:
+            self._connection.execute(
+                "INSERT INTO graph_ui_params (parameter, value) VALUES (?, ?) "
+                "ON CONFLICT (parameter) DO UPDATE SET value = excluded.value",
+                (_SELECTED_NODE, node_id),
+            )
+        if not transaction_was_active:
+            self._connection.commit()
+
+    def get_active_container_id(self) -> str:
+        row = self._connection.execute(
+            "SELECT value FROM graph_ui_params WHERE parameter = ?",
+            (_ACTIVE_CONTAINER_ID,),
+        ).fetchone()
+        return "" if row is None else row[0].decode("utf-8")
+
+    def set_active_container_id(self, container_id: str) -> None:
+        if not isinstance(container_id, str):
+            raise ValueError("active container ID must be a string")
+        encoded = container_id.encode("utf-8")
         transaction_was_active = self._connection.in_transaction
         self._connection.execute(
             "INSERT INTO graph_ui_params (parameter, value) VALUES (?, ?) "
             "ON CONFLICT (parameter) DO UPDATE SET value = excluded.value",
-            (_SELECTED_NODE, node_id),
+            (_ACTIVE_CONTAINER_ID, encoded),
         )
         if not transaction_was_active:
             self._connection.commit()

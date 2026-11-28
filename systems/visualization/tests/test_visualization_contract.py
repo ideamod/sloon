@@ -175,6 +175,9 @@ class FakeGraphUI:
         self.get_selected_node_calls += 1
         return self.selected_node
 
+    def get_active_container_id(self) -> str:
+        return ""
+
     def select_node(self, node_id: int) -> None:
         self.selected_node = node_id
 
@@ -233,6 +236,10 @@ class FakeNodes:
 
     def node_exists(self, node_id: int) -> bool:
         return self.graph.get_node(node_id) is not None
+
+    def get_many(self, node_ids, keys):
+        # These fixtures use the root graph and have no container properties.
+        return {node_id: {} for node_id in node_ids}
 
     def get_all(self, node_id: int):
         value = self.assignments.get(node_id)
@@ -1209,6 +1216,40 @@ def test_dashed_style_is_consumed_without_checking_node_type_name() -> None:
     assert rendered_rows(viewer)[0][:12] == "■╌╌╌╌╌╌╌╌╌╌┐"
 
 
+@pytest.mark.parametrize(
+    ("collapsed", "expected_rows"),
+    [
+        (False, ["■══════════╗", "║Copy title║", "╚══════════╝"]),
+        (True, ["■═══════╦══╗", "║Copy…  ║+ ║", "╚═══════╩══╝"]),
+    ],
+)
+def test_custom_double_border_changes_only_border_glyphs(collapsed, expected_rows):
+    viewer, _, assignments, node_type, geometry = open_styled_viewer(
+        node_type_name="custom",
+        border_style="solid",
+        collapsed=collapsed,
+        selected=True,
+    )
+    assignments.assignments[1] = {
+        "type": "custom", "title": "Copy title", "color": "green", "status": "failure",
+    }
+    viewer.refresh()
+    before, width, height = rendered(viewer)
+
+    node_type._border_style = "double"
+    viewer.refresh()
+    after, double_width, double_height = rendered(viewer)
+
+    assert [row[:12] for row in after.plain.splitlines()[:3]] == expected_rows
+    assert (double_width, double_height) == (width, height)
+    assert viewer._snapshot.rectangles[1] == geometry.get_rect(1)
+    assert after.spans == before.spans
+    assert [row[12:] for row in after.plain.splitlines()] == [
+        row[12:] for row in before.plain.splitlines()
+    ]
+    assert after.plain.splitlines()[3] == before.plain.splitlines()[3]
+
+
 def test_selected_copy_node_preserves_dashed_border_and_selection_style() -> None:
     selected, _, _, _, _ = open_styled_viewer(
         selected=True,
@@ -1345,7 +1386,14 @@ def test_selection_applies_background_and_preserves_status_foreground() -> None:
 
 def test_unsupported_node_border_style_is_rejected() -> None:
     with pytest.raises(ValueError, match="border style"):
-        open_styled_viewer(border_style="double")
+        open_styled_viewer(border_style="unsupported")
+
+    viewer, _, _, node_type, _ = open_styled_viewer()
+    last_valid = viewer._snapshot
+    node_type._border_style = "unsupported"
+    with pytest.raises(ValueError, match="border style"):
+        viewer.refresh()
+    assert viewer._poll_snapshot() is last_valid
 
 
 def test_collapsed_node_renders_exact_internal_indicator_structure() -> None:

@@ -371,7 +371,9 @@ class ControlTests(unittest.TestCase):
             ValueError("node deleted"),
             {3: {"title": "Match Three", "type": "text", "status": "warning"}},
         )
-        control = open_nodes_control(nodes, Mock(), Mock(), workspace_path=Path("/test.sloon"))
+        graph_ui = Mock()
+        graph_ui.get_active_container_id.return_value = ""
+        control = open_nodes_control(nodes, graph_ui, Mock(), workspace_path=Path("/test.sloon"))
 
         self.assertEqual(
             control.search_titles("match"),
@@ -1315,7 +1317,7 @@ class ControlAppTests(unittest.IsolatedAsyncioTestCase):
             status = str(app.query_one("#status", Static).render())
 
         control.select_node.assert_called_once_with(8)
-        self.assertEqual(status, "Node 8 does not exist")
+        self.assertEqual(status, "Node 8 does not exist in the active graph")
 
     async def test_long_search_results_scroll_in_narrow_terminal(self) -> None:
         control = Mock()

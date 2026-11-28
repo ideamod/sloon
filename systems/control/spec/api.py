@@ -29,8 +29,9 @@ Terminal interaction contract:
   selected node's decimal weight. Enter stores a valid signed integer through
   ``set_selected_weight``; invalid input changes nothing. Escape cancels.
 - ``/`` opens live node selection. An all-decimal query retains direct node-ID
-  navigation. Any other non-blank query searches every existing node title by
-  case-insensitive substring, including nodes currently hidden by collapse.
+  navigation within the active graph. Any other non-blank query searches
+  active graph titles by case-insensitive substring, including nodes hidden
+  by collapse.
   Search results temporarily replace selected-node information and show the
   query, match count, title, node ID, type, and status. Duplicate titles remain
   separate results in Graph node order. Up and Down change the active result,
@@ -83,7 +84,12 @@ Terminal interaction contract:
 - In normal mode, ``y`` copies the selected node to the system clipboard
   and ``p`` pastes a copy as an output of the selected node. In Control
   inputs these keys enter text. Native terminal paste remains a text editing
-  action. Use ``q`` or Ctrl+C to quit from normal mode.
+  action. Use Ctrl+C to quit from normal mode.
+- In normal mode, ``g`` enters the selected container and ``q`` leaves the
+  active container. Within an input these keys enter text. At root, ``q``
+  has no effect.
+- A ``:type`` command that would change a container to another type reports
+  the rejection in the Control status panel.
 - Copy and paste report the result in the Control status panel. Missing
   selection, invalid clipboard data, and clipboard I/O failures do not change
   the graph. Paste does not write to the clipboard.
@@ -139,15 +145,36 @@ class TitleSearchResult:
 class ControlAPI(Protocol):
     """Coordinate graph editing, selection, and node execution."""
 
+    def enter_container(self) -> bool:
+        """Enter the selected visible container, clear selection, and return True.
+
+        A container is a node whose type property is exactly "container".
+        Persist its decimal node ID as the active container ID. Empty
+        containers are enterable. Return False with no changes when the
+        selected node is absent, hidden, or has any other type.
+        """
+        ...
+
+    def leave_container(self) -> bool:
+        """Leave the active container and return True.
+
+        Read the container's immediate parent from its container_id property,
+        defaulting to root. Persist that active ID and reveal and select the
+        exited container in the parent graph. An invalid persisted active ID
+        or ancestry is recovered by persisting root and clearing selection.
+        At root return False without changes. There is no navigation stack.
+        """
+        ...
+
     def select_node(self, node_id: int) -> bool:
-        """Reveal and select an existing graph node.
+        """Reveal and select an existing node in the active graph.
 
         First call :meth:`reveal_node`. If revealing succeeds, select the node
         through Graph UI and return True.
 
-        If ``node_id`` is invalid or missing, return False without changing
-        collapse state or the current selection. Propagate graph validation
-        errors without changing selection.
+        If ``node_id`` is invalid, missing, or outside the active graph, return
+        False without changing collapse state or selection. Propagate graph
+        validation errors without changing selection.
         """
         ...
 
@@ -155,12 +182,13 @@ class ControlAPI(Protocol):
         """Expand only the collapsed nodes needed to reveal ``node_id``.
 
         Return False without modifying state when ``node_id`` is not an
-        integer (excluding bool) or does not exist in Graph. Return True
+        integer (excluding bool) or is outside the active graph. Return True
         without modifying state when it is already visible.
 
-        Read the complete graph and collapsed state, then calculate the entire
-        reveal plan through Visible Graph before changing persistence. Expand
-        only IDs in that plan using ``GraphUIAPI.set_node_collapsed(id,
+        Project active graph membership and read collapsed state, then
+        calculate the entire reveal plan through Visible Graph before changing
+        persistence. Expand only IDs in that plan using
+        ``GraphUIAPI.set_node_collapsed(id,
         False)``. Preserve unrelated collapsed nodes.
 
         Do not change selection, graph topology, node properties, dimensions,
@@ -187,8 +215,8 @@ class ControlAPI(Protocol):
         ``str.casefold``. Return an empty tuple for an empty or whitespace-only
         query rather than matching every node.
 
-        Search all current Graph nodes in Graph order, regardless of Visible
-        Graph or collapsed state. Read properties only through
+        Search the active graph's nodes in Graph order, including nodes hidden
+        by collapse. Read properties only through
         ``Nodes``. Nodes without properties, properties with an
         empty title, and nodes deleted before their property set can be read are
         skipped. Preserve duplicate titles as distinct results.
@@ -220,7 +248,11 @@ class ControlAPI(Protocol):
 
         Return its ID.
 
-        Do not materialize standard defaults unnecessarily.
+        Store the effective active container ID as container_id for all nodes
+        created through Control. At root, omit the property. Membership is
+        assigned at creation and is unavailable for editing through Control.
+        An invalid active ID or ancestry uses root for graph operations.
+        Do not materialize other standard defaults unnecessarily.
         """
         ...
 
@@ -257,9 +289,15 @@ class ControlAPI(Protocol):
 
         Connected edges are removed by Graph.
 
-        Before deletion, read the selected node's inputs in Graph order. After
-        deletion, select the first input when one exists. If the node has no
-        input, do not make another selection.
+        Before deletion, read the selected node's inputs in the active graph
+        in Graph order. After deletion, select the first surviving input when
+        one exists. If an ordinary node has no input, do not make another
+        selection.
+
+        For a container, delete all its immediate members and descend through
+        nested containers in one Nodes transaction. Visit each node at most
+        once. Follow only exact membership references to containers. Clear
+        selection if no input survives. Do not repair malformed properties.
 
         If no existing node is selected, return None
         without changing anything.
@@ -274,7 +312,7 @@ class ControlAPI(Protocol):
         Create:
             selected -> target
 
-        Return True if both nodes exist and the connection
+        Return True if both nodes belong to the active graph and the connection
         preserves a directed acyclic graph.
 
         Reject self-loops and cycles.
@@ -345,7 +383,7 @@ class ControlAPI(Protocol):
         Persist the new state through ``GraphUIAPI`` and keep selection on the
         toggled node. Return True when newly collapsed and False when newly
         expanded. Return None without changes when there is no selected
-        visible node or the selected node has no outgoing Graph edges.
+        visible node or the selected node has no outgoing edges in the active graph.
 
         Do not modify Graph nodes or edges, node properties, selection, node
         dimensions, or collapsed state belonging to any other node.
@@ -365,10 +403,13 @@ class ControlAPI(Protocol):
         Return False without changes if:
         - no existing node is selected;
         - type is not a string;
-        - type is empty.
+        - type is empty;
+        - the selected node is a container and the requested type is different.
 
-        Otherwise persist through Nodes
-        and return True.
+        Any ordinary node can become a container. Reapplying the current
+        container type is accepted. Other property edits keep their usual
+        behavior. Persist successful type assignments through Nodes and
+        return True.
         """
         ...
 
@@ -489,17 +530,18 @@ class ControlAPI(Protocol):
     def paste_selected(self, clipboard_text: str) -> int | None:
         """Paste clipboard properties as a new output of the selected node.
 
-        Return the new node's ID. Create the node with exactly the copied
-        properties and connect the selected node to it in one Nodes
-        transaction. Preserve existing nodes, edges, selection, and UI state.
+        Return the new node's ID. Copy properties except for container_id,
+        which is determined by the active graph. Connect the selected node
+        in the active graph to the new node in one Nodes transaction.
+        Preserve existing nodes, edges, selection, and UI state.
         If Nodes rejects the pasted properties, roll back the transaction
         and return None. Other storage failures roll back and propagate.
 
         Return None without changing the graph when there is no existing
-        selected node or the text is empty, malformed, or has an unsupported
-        format or version. Reject duplicate JSON keys and require a string
-        value for each property. Nodes validates admissibility of the keys
-        and values.
+        selected node in the active graph or the text is empty, malformed,
+        or has an unsupported format or version. Reject duplicate JSON keys
+        and require a string value for each property. Nodes validates the
+        keys and values.
         Pasting is repeatable and independent of the original node and
         workspace. The terminal interface reads the system clipboard and
         leaves its contents intact.
@@ -543,7 +585,8 @@ def open_control(
             Graph structure and mutations.
 
         Graph UI:
-            Selection, global node dimensions, and collapsed node IDs.
+            Active container ID, selection, global node dimensions, and
+            collapsed node IDs.
 
         Nodes:
             Persisted node type, parameter, and title.

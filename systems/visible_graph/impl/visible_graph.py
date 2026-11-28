@@ -7,6 +7,40 @@ import heapq
 from systems.visible_graph.spec.schema import VisibleGraph
 
 
+def filter_container_graph(
+    nodes: list[int],
+    edges: list[tuple[int, int]],
+    properties: dict[int, dict[str, str]],
+    active_container_id: str,
+) -> tuple[list[int], list[tuple[int, int]], str]:
+    effective_id = active_container_id
+    if effective_id:
+        parents = {
+            str(node_id): properties[node_id].get("container_id", "")
+            for node_id in nodes
+            if properties.get(node_id, {}).get("type") == "container"
+        }
+        visited = set()
+        current = effective_id
+        while current:
+            if current in visited or current not in parents:
+                effective_id = ""
+                break
+            visited.add(current)
+            current = parents[current]
+
+    members = [
+        node_id for node_id in nodes
+        if properties.get(node_id, {}).get("container_id", "") == effective_id
+    ]
+    member_ids = set(members)
+    internal_edges = [
+        (source, target) for source, target in edges
+        if source in member_ids and target in member_ids
+    ]
+    return members, internal_edges, effective_id
+
+
 def _validate_inputs(
     nodes: object,
     edges: object,

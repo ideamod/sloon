@@ -662,3 +662,26 @@ def test_interactive_apps_render_and_execute_external_node_in_selected_workspace
         assert Nodes(storage.connection()).get(1, "seen_workspace") == str(workspace_path)
     finally:
         storage.close()
+
+
+def test_full_graph_cli_ignores_active_container(tmp_path):
+    assert run_cli(tmp_path, "init", "nested").returncode == 0
+    storage = Storage.open(tmp_path / "nested.sloon")
+    try:
+        connection = storage.connection()
+        nodes = Nodes(connection)
+        parent = nodes.create_node(type="container")
+        child = nodes.create_node(container_id=str(parent))
+        nodes.connect(parent, child)
+        open_graph_ui(connection).set_active_container_id(str(parent))
+    finally:
+        storage.close()
+
+    result = run_cli(tmp_path, "--workspace", "nested.sloon", "graph")
+    assert json.loads(result.stdout) == {
+        "nodes": [
+            {"id": parent, "properties": {"type": "container"}},
+            {"id": child, "properties": {"container_id": str(parent)}},
+        ],
+        "edges": [[parent, child]],
+    }

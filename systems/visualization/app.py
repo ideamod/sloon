@@ -8,12 +8,16 @@ from systems.logical_layout import calculate_layout
 from systems.nodes import Nodes
 from systems.node_types import resolve_node_type
 from systems.visualization import measure_node_sizes, open_visualization
-from systems.visualization.impl.visualization import _presentation_weight
-from systems.visible_graph import calculate_visible_graph
+from systems.visualization.impl.visualization import (
+    _presentation_weight,
+    _project_visible_graph,
+)
 
 
 def main(nodes_api: Nodes, graph_ui: GraphUIAPI, workspace_path: Path) -> None:
-    visible_graph = calculate_visible_graph(
+    visible_graph, _ = _project_visible_graph(
+        nodes_api,
+        graph_ui,
         nodes_api.list_nodes(),
         nodes_api.list_edges(),
         graph_ui.get_collapsed_node_ids(),

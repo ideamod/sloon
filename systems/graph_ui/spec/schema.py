@@ -10,6 +10,9 @@ SQLite table:
 
 Parameters:
 - SELECTED_NODE stores the currently selected node ID.
+- ACTIVE_CONTAINER_ID stores the exact UTF-8 bytes of the active container ID
+  as a SQLite BLOB to preserve text under the existing integer affinity.
+  An absent parameter or an empty string represents the root graph.
 - NODE_WIDTH stores the global main-node width. If absent, the public API
   returns the existing default of 12.
 - NODE_HEIGHT stores the global number of interior node text rows. If absent,

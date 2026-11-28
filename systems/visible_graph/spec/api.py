@@ -3,6 +3,32 @@
 from .schema import VisibleGraph
 
 
+def filter_container_graph(
+    nodes: list[int],
+    edges: list[tuple[int, int]],
+    properties: dict[int, dict[str, str]],
+    active_container_id: str,
+) -> tuple[list[int], list[tuple[int, int]], str]:
+    """Return the active graph's nodes, edges, and effective container ID.
+
+    Containers are nodes whose textual type property is exactly "container".
+    A missing or empty container_id means root. Other values identify the
+    immediate parent and match the decimal string form of that parent's ID.
+
+    An active ID must identify a container with a chain of existing container
+    parents ending at root. For missing or non-container references and cycles,
+    use root as the effective active ID. This fallback never modifies inputs
+    or persisted state. A missing properties entry is an empty property set.
+
+    Keep only nodes whose properties.get("container_id", "") equals the
+    effective ID, and only edges with both endpoints among those nodes.
+    Preserve node and edge order. Apply this filter before calculating collapse
+    visibility or reveal plans. The filtered edges also define whether a node
+    has outputs in its graph.
+    """
+    ...
+
+
 def calculate_visible_graph(
     nodes: list[int],
     edges: list[tuple[int, int]],

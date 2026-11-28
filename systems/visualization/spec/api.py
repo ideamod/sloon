@@ -116,9 +116,8 @@ class VisualizationAPI(Protocol):
         Selection styling applies the same selection background to the square
         as to the rest of the node while its foreground remains determined
         exclusively by status. Selecting or deselecting a node does not
-        modify its status. The square is used with both solid and dashed
-        borders and occupies the existing corner cell, so it does not change
-        node or envelope dimensions.
+        modify its status. The square occupies the existing corner cell for
+        every border style, preserving node and envelope dimensions.
         Assignment notes, tags, and weights are not displayed inside node
         rectangles. Notes and tags do not affect wrapping, node dimensions,
         geometry, layout, border style, or execution behavior. Weight is passed
@@ -128,13 +127,16 @@ class VisualizationAPI(Protocol):
 
             solid:  horizontal ``─`` and vertical ``│``
             dashed: horizontal ``╌`` and vertical ``╎``
+            double: horizontal ``═`` and vertical ``║``
 
-        The remaining corners use ``┐``, ``└``, and ``┘`` for both styles
-        because Unicode provides no corresponding light dashed corner set. An
-        unsupported border style or invalid ``NodeRender`` raises
-        ``ValueError`` during opening or explicit refresh; polling retains the
-        last valid snapshot. Visualization does not infer style from a type
-        name.
+        Solid and dashed borders use the corner glyphs ``┌``, ``┐``, ``└``,
+        and ``┘``. Double borders use ``╔``, ``╗``, ``╚``, and ``╝``.
+        The status square replaces the upper-left corner for each style.
+        Border style changes only the glyphs. Dimensions, color, selection
+        styling, status styling, and edge placement follow the same rules
+        for every style. An unsupported border style or invalid ``NodeRender``
+        raises ``ValueError`` during opening or explicit refresh. Polling
+        retains the last valid snapshot. Any node type can choose any style.
 
         The visible main rectangle is exactly ``node_width`` terminal cells
         wide and ``node_height + 2`` rows high: one top border, exactly
@@ -143,12 +145,12 @@ class VisualizationAPI(Protocol):
         whether their title is empty, short, or truncated.
 
         A visible collapsed node displays an internal indicator only when it
-        has at least one outgoing edge in the complete Graph. The indicator
+        has at least one outgoing edge in the active graph. The indicator
         occupies the rightmost three columns of the existing main rectangle.
         A style-matched vertical separator precedes two indicator-content
         cells, containing ``+`` centered as ``"+ "``. The top separator is
-        ``┬`` and the bottom separator is ``┴``. For ``node_width=12`` the
-        exact structure is::
+        ``┬`` and the bottom separator is ``┴`` for solid and dashed borders.
+        For ``node_width=12`` the solid structure is::
 
             ■───────┬──┐
             │ title │+ │
@@ -160,6 +162,12 @@ class VisualizationAPI(Protocol):
             ■╌╌╌╌╌╌╌┬╌╌┐
             ╎ title ╎+ ╎
             └╌╌╌╌╌╌╌┴╌╌┘
+
+        A double collapsed node uses double junctions ``╦`` and ``╩``::
+
+            ■═══════╦══╗
+            ║ title ║+ ║
+            ╚═══════╩══╝
 
         Its external width and height are unchanged. Expanded nodes and
         collapsed leaves use the ordinary rectangle without a separator. A
@@ -232,10 +240,12 @@ class VisualizationAPI(Protocol):
         usable empty viewer.
 
         On every accepted snapshot, Visualization reads complete nodes and
-        edges from Graph and collapsed IDs from Graph UI, then calls Visible
-        Graph. Only the returned nodes and edges are assigned titles, supplied
-        to Logical Layout and Geometry, and rendered. Hidden nodes and edges
-        never appear. Visibility traversal and filtering remain exclusively
+        edges from Nodes, along with type and membership properties, and
+        reads collapsed IDs and the active container ID from Graph UI. It
+        passes these inputs to Visible Graph. The returned graph supplies
+        the nodes and edges for Logical Layout, Geometry, and rendering.
+        Visualization reads titles for the returned nodes. Visibility
+        traversal and filtering remain exclusively
         owned by Visible Graph. Collapse does not change occupied node sizes;
         collapsed and expanded nodes with the same ID-visibility setting have
         identical Geometry dimensions.
@@ -275,11 +285,12 @@ class VisualizationAPI(Protocol):
     ) -> None:
         """Replace the displayed snapshot after an external state change.
 
-        On every call, the viewer rereads complete nodes and edges from the
-        retained ``Nodes`` API; collapsed IDs, selected node ID, width, height,
-        and ID visibility from the retained ``GraphUIAPI``; projects them with
-        Visible Graph; reads each visible property set; resolves its node type;
-        and calls ``NodeType.render()`` for its border style. It never calls
+        On every call, the viewer rereads complete nodes, edges, and relevant
+        properties from the retained ``Nodes`` API. It reads collapsed IDs,
+        selection, width, height, ID visibility, and the active container ID
+        from ``GraphUIAPI``. It projects the active graph with Visible Graph,
+        resolves each visible node type, and calls ``NodeType.render()`` for
+        its border style. It never calls
         ``NodeType.execute()``. Text is rewrapped from the property set title, or
         from ``NodeRender.title`` when the property set title is empty, on every
         successful refresh, including after width, height, or property set
@@ -290,9 +301,8 @@ class VisualizationAPI(Protocol):
         placement. If graph
         topology has changed, ``ValueError`` is raised rather than silently
         displaying it with stale logical placement. Otherwise the viewer
-        retains or recalculates placement after collapse or property set-weight
-        changes as needed and
-        redraws current selection, border style, status indicator,
+        recalculates placement as needed when the active graph, collapse state,
+        or node weights change. It redraws current selection, border style, status indicator,
         collapsed-node indicator, and title text. It retains
         geometry when visible topology, indicator nodes, current node width,
         node height, shared occupied width, and ID visibility are unchanged. If
@@ -403,9 +413,9 @@ def open_visualization(
     The caller supplies the absolute path of the workspace backing Nodes.
     The viewer passes it to every render context, including during refresh.
 
-    Opening reads complete graph nodes and edges; collapsed IDs, the current
-    selected node, width, height, and ID visibility; calculates Visible Graph;
-    reads visible properties, resolves their node types, and calls
+    Opening reads complete graph nodes and edges, membership and type
+    properties, and current Graph UI state including the active container ID.
+    It calculates Visible Graph, resolves visible node types, and calls
     ``NodeType.render()``. It then accepts the supplied layout and geometry as
     the initial visible display snapshot. The property set title is the primary
     source of text inside each node, with ``NodeRender.title`` as the fallback
@@ -422,7 +432,7 @@ def open_visualization(
     property result that is not a dictionary of text keys and values raises
     ``ValueError`` and no viewer is returned.
     An empty visible graph, empty layout, and empty geometry form a valid
-    initial snapshot and require no property set lookups.
+    initial snapshot and require no visible node presentation lookups.
 
     A caller using ``geometry.calculate_geometry`` must configure that call
     with the shared occupied width returned by :func:`measure_node_sizes`, not

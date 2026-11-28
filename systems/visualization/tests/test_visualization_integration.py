@@ -1,6 +1,7 @@
 """Cross-system regressions for the Visualization startup boundary."""
 
 import asyncio
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
@@ -15,8 +16,10 @@ from systems.logical_layout import calculate_layout
 from systems.nodes import Nodes
 from systems.node_types import resolve_node_type
 from systems.visualization import measure_node_sizes, open_visualization
+from systems.visualization import app
 from systems.visualization.impl.visualization import (
     _GraphCanvas,
+    _Visualization,
     _VisualizationApp,
     _render_snapshot,
 )
@@ -445,3 +448,42 @@ def test_copy_border_style_integrates_with_collapse_and_id_visibility(
         } == assignments_before
     finally:
         connection.close()
+
+
+def test_startup_and_polling_display_the_active_container(tmp_path, monkeypatch):
+    path = tmp_path / "containers.db"
+    nodes, connection = open_workspace(path)
+    control_nodes, control_connection = open_workspace(path)
+    with closing(connection), closing(control_connection):
+        graph_ui = open_graph_ui(connection)
+        container = nodes.create_node(type="container")
+        nested = nodes.create_node(type="container", container_id=str(container))
+        member = nodes.create_node(container_id=str(container))
+        root = nodes.create_node()
+        nodes.connect(member, root)
+        graph_ui.set_node_collapsed(member, True)
+        graph_ui.set_active_container_id(str(container))
+
+        viewers = []
+        monkeypatch.setattr(_Visualization, "run", lambda viewer: viewers.append(viewer))
+        app.main(nodes, graph_ui, tmp_path)
+        viewer = viewers[0]
+        assert viewer._snapshot.nodes == (nested, member)
+        assert viewer._snapshot.indicator_nodes == frozenset()
+        assert viewer._snapshot.edges == ()
+
+        control_ui = open_graph_ui(control_connection)
+        control = open_control(
+            control_nodes, control_ui, resolve_node_type, workspace_path=tmp_path,
+        )
+        assert control.select_node(nested)
+        assert control.enter_container()
+        assert viewer._poll_snapshot().nodes == ()
+        assert control.leave_container()
+        snapshot = viewer._poll_snapshot()
+        assert snapshot.nodes == (nested, member)
+        assert snapshot.selected_node == nested
+        assert control.leave_container()
+        snapshot = viewer._poll_snapshot()
+        assert snapshot.nodes == (container, root)
+        assert snapshot.selected_node == container

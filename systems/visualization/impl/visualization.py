@@ -24,7 +24,11 @@ from systems.logical_layout.spec.api import LogicalLayoutAPI
 from systems.logical_layout.spec.schema import ComponentLayout, LogicalLayout
 from systems.nodes import Nodes
 from systems.node_types.spec.api import NodeContext, NodeRender, NodeType
-from systems.visible_graph import VisibleGraph, calculate_visible_graph
+from systems.visible_graph import (
+    VisibleGraph,
+    calculate_visible_graph,
+    filter_container_graph,
+)
 
 
 _THEME_PATH = Path(__file__).resolve().parents[1] / "config" / "theme.yaml"
@@ -70,8 +74,9 @@ def _load_theme(path: Path = _THEME_PATH) -> dict[str, str]:
 _LINE_BREAKS = re.compile(r"\r\n|\r|\n")
 _TITLE_CONTROLS = re.compile(r"[\x00-\x09\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _BORDER_GLYPHS = {
-    "solid": ("─", "│"),
-    "dashed": ("╌", "╎"),
+    "solid": ("─", "│", "┌", "┐", "└", "┘", "┬", "┴"),
+    "dashed": ("╌", "╎", "┌", "┐", "└", "┘", "┬", "┴"),
+    "double": ("═", "║", "╔", "╗", "╚", "╝", "╦", "╩"),
 }
 _STATUS_STYLES = frozenset(("none", "progress", "success", "warning", "failure"))
 
@@ -224,16 +229,20 @@ def _read_presentations(
 
 
 def _project_visible_graph(
+    nodes: Nodes,
+    graph_ui: GraphUIAPI,
     raw_nodes: list[int],
     raw_edges: list[tuple[int, int]],
     collapsed_node_ids: set[int],
 ) -> tuple[VisibleGraph, frozenset[int]]:
-    visible = calculate_visible_graph(
+    members, edges, _ = filter_container_graph(
         raw_nodes,
         raw_edges,
-        collapsed_node_ids,
+        nodes.get_many(raw_nodes, ["type", "container_id"]),
+        graph_ui.get_active_container_id(),
     )
-    sources_with_outputs = {source for source, _target in raw_edges}
+    visible = calculate_visible_graph(members, edges, collapsed_node_ids)
+    sources_with_outputs = {source for source, _target in edges}
     indicator_nodes = frozenset(
         node_id
         for node_id in visible.nodes
@@ -253,6 +262,8 @@ def _read_dependency_state(
         raw_edges = _validate_edges(nodes.list_edges(), raw_nodes)
         collapsed_node_ids = graph_ui.get_collapsed_node_ids()
         visible, indicator_nodes = _project_visible_graph(
+            nodes,
+            graph_ui,
             raw_nodes,
             raw_edges,
             collapsed_node_ids,
@@ -634,13 +645,16 @@ def _render_snapshot(snapshot: _Snapshot, theme: Mapping[str, str] | None = None
             border_color = theme.get(color_key, border_color)
         style = Style(color=theme["text-color-selected" if selected else "text-color-normal"], bgcolor=background, bold=selected)
         border_style = Style(color=border_color, bgcolor=background, bold=selected)
-        horizontal, vertical = _BORDER_GLYPHS[snapshot.border_styles[node]]
+        (
+            horizontal, vertical, top_left, top_right, bottom_left, bottom_right,
+            top_junction, bottom_junction,
+        ) = _BORDER_GLYPHS[snapshot.border_styles[node]]
         if node in snapshot.indicator_nodes:
             title_width = snapshot.node_width - 5
             put(
                 main_x,
                 main_y,
-                "■" + horizontal * title_width + "┬" + horizontal * 2 + "┐",
+                top_left + horizontal * title_width + top_junction + horizontal * 2 + top_right,
                 border_style,
             )
             for index, row in enumerate(snapshot.wrapped_titles[node]):
@@ -654,14 +668,14 @@ def _render_snapshot(snapshot: _Snapshot, theme: Mapping[str, str] | None = None
             put(
                 main_x,
                 main_y + snapshot.node_height + 1,
-                "└" + horizontal * title_width + "┴" + horizontal * 2 + "┘",
+                bottom_left + horizontal * title_width + bottom_junction + horizontal * 2 + bottom_right,
                 border_style,
             )
         else:
             put(
                 main_x,
                 main_y,
-                "■" + horizontal * (snapshot.node_width - 2) + "┐",
+                top_left + horizontal * (snapshot.node_width - 2) + top_right,
                 border_style,
             )
             for index, row in enumerate(snapshot.wrapped_titles[node]):
@@ -672,7 +686,7 @@ def _render_snapshot(snapshot: _Snapshot, theme: Mapping[str, str] | None = None
             put(
                 main_x,
                 main_y + snapshot.node_height + 1,
-                "└" + horizontal * (snapshot.node_width - 2) + "┘",
+                bottom_left + horizontal * (snapshot.node_width - 2) + bottom_right,
                 border_style,
             )
         indicator_style = Style(color=theme[f"status-icon-color-{snapshot.statuses[node]}"], bgcolor=background, bold=selected)

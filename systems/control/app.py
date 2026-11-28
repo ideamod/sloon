@@ -37,7 +37,8 @@ class ControlApp(App[None]):
         Binding("i", "create_input", "New input"),
         Binding("space", "toggle_collapse", "Collapse"),
         Binding("enter", "execute_selected", "Execute"),
-        Binding("q", "quit", "Quit"),
+        Binding("g", "enter_container", "Enter container"),
+        Binding("q", "leave_container", "Leave container"),
         Binding("ctrl+c", "quit", show=False),
         Binding("y", "copy_selected_node", "Copy node"),
         Binding("p", "paste_selected_node", "Paste node"),
@@ -301,7 +302,7 @@ class ControlApp(App[None]):
             if self._control.select_node(node_id):
                 self._show_selection(node_id)
             else:
-                self._show_status(f"Node {node_id} does not exist")
+                self._show_status(f"Node {node_id} does not exist in the active graph")
             return
 
         self._close_command()
@@ -553,6 +554,8 @@ class ControlApp(App[None]):
                 self._show_status("Type must be non-empty")
             elif self._control.set_selected_type(assignment_type):
                 self._show_status("Type updated")
+            elif self._control.get_selected_info() is not None:
+                self._show_status("Cannot change a container to another type")
             else:
                 self._show_status("No existing node is selected")
             return
@@ -705,6 +708,14 @@ class ControlApp(App[None]):
 
     def action_create_node(self) -> None:
         self._show_selection(self._control.create_node())
+
+    def action_enter_container(self) -> None:
+        if self._input_mode is None and self._control.enter_container():
+            self._show_status("Entered container")
+
+    def action_leave_container(self) -> None:
+        if self._input_mode is None and self._control.leave_container():
+            self._show_status("Left container")
 
     def action_copy_selected_node(self) -> None:
         if self._input_mode is not None:
